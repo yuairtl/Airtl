@@ -17,9 +17,10 @@ Airtl is a VS Code extension for RTL/FPGA/FPSoC development, providing an RTL hi
 - 修复大型 SystemVerilog 接口解析崩溃及过程块源码/例化定位；Block Design 使用原生 Scene 和导航缓存。
 - OpenCode 首次启动即在同一个可见 TUI 进程中启用 API，复用当前工作区会话；未安装 CLI 时直接提示。
 - AI 消息中的任务、工程目录和工具路径以可读文本呈现；系统规则和对应技能通过独立的 system 字段传递。
-- 默认授权截止时间：**2027-01-01 00:00:00 UTC**。技能与提示词仍单独提供，发布包只保留占位内容。
+- 项目部分代码已开源；公开版本需要联网运行，目前全员免费开放试用。公开版本不包括 AI 辅助相关技能，需自行填写。
+- 如需 AI 辅助相关技能、AI 环境配置或离线使用，请联系 Airtl 提供。
 
-This preview fixes parsing crashes on large SystemVerilog interfaces and procedural source navigation. It uses native Scene rendering and cached navigation, starts OpenCode with its API enabled in the same visible TUI process, and sends readable task context while keeping system rules and the selected skill in the system field. Default authorization expires on **2027-01-01 00:00:00 UTC**. Prompts and skills are provided separately; the distribution contains placeholders only.
+This preview fixes parsing crashes on large SystemVerilog interfaces and procedural source navigation. It uses native Scene rendering and cached navigation, starts OpenCode with its API enabled in the same visible TUI process, and sends readable task context while keeping system rules and the selected skill in the system field. Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included and must be provided by the user. Contact Airtl for AI skills, AI environment setup, or offline use.
 
 ## 当前功能与发展方向 / Current Features and Roadmap
 
@@ -110,11 +111,15 @@ Companion skills are supplied separately from the extension. The release's `prom
 完整的安装、配置和操作步骤见[中文使用指南](使用指南.md)。
 For detailed installation and configuration steps, see the [English User Guide](USER_GUIDE.md).
 
-## 许可 / License
+## 许可与版本说明 / License and version information
 
-当前版本内置默认授权的截止时间为 **2027-01-01 00:00:00 UTC**。
+**部分代码开源**：项目部分代码已开源。公开版本需要联网运行，目前全员免费开放试用。公开版本不包括 AI 辅助相关技能，使用者需要自行填写。
 
-The built-in default authorization expires at **2027-01-01 00:00:00 UTC**.
+**AI 技能与离线支持**：如需 AI 辅助相关技能、配置 AI 环境，或有离线使用需求，请联系 Airtl 提供。
+
+**Partially open source**: Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included in the public version and must be provided by the user.
+
+**AI skills and offline use**: Contact Airtl for AI assistance skills, AI environment setup, or offline use.
 
 仓库中的可读源码与文档按 Apache License 2.0 授权，详见 [LICENSE-APACHE-2.0](LICENSE-APACHE-2.0)。整个 VSIX 不应视为统一按 Apache 2.0 授权：编译原生核心不含 C++ 源码，需按其独立授权规则使用，详见 [LICENSE](LICENSE)。
 

@@ -43,9 +43,21 @@ RTL 解析、工程文件收集、模块图、端口与总线处理、布局和�
 
 ## 授权
 
-内置默认授权截止于 **2027-01-01 00:00:00 UTC**。正式授权文件可按授权规则覆盖默认授权。
+### 部分代码开源
 
-The built-in default authorization expires at **2027-01-01 00:00:00 UTC**. A valid license file can replace the default authorization.
+项目部分代码已开源。公开版本需要联网运行，目前全员免费开放试用。公开版本不包括 AI 辅助相关技能，使用者需要自行填写。
+
+### AI 技能与离线支持
+
+如需 AI 辅助相关技能、AI 环境配置，或有离线使用需求，请联系 Airtl 提供。
+
+### Open-source and public version
+
+Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included in the public version and must be provided by the user.
+
+### AI skills and offline use
+
+Please contact Airtl for AI assistance skills, AI environment setup, or offline use.
 
 ## 发布内容
 
