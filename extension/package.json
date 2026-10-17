@@ -1,0 +1,261 @@
+{
+  "name": "airtl",
+  "displayName": "Airtl",
+  "description": "%extension.description%",
+  "version": "1.0.0-preview",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Airtl yu <yuairtl@outlook.com>",
+  "icon": "icon.png",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.61.0"
+  },
+  "keywords": [
+    "vivado",
+    "fpga",
+    "rtl",
+    "verilog",
+    "systemverilog",
+    "vhdl",
+    "hierarchy",
+    "block design",
+    "xilinx",
+    "amd"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:vivadoProjectExplorer",
+    "onView:vivadoBDTree",
+    "onView:vivadoWorkflow",
+    "onCommand:vivadoProjectExplorer.openBlockDesign",
+    "onCommand:vivadoBD.openScope"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "vivadoProjectExplorer",
+          "name": "%view.projectTree%"
+        },
+        {
+          "id": "vivadoBDTree",
+          "name": "%view.bdTree%"
+        },
+        {
+          "id": "vivadoWorkflow",
+          "name": "%view.workflow%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vivadoProjectExplorer.refresh",
+        "title": "%command.refreshTree%",
+        "category": "Vivado",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vivadoProjectExplorer.setProject",
+        "title": "%command.setProject%",
+        "category": "Vivado",
+        "icon": "$(file-directory)"
+      },
+      {
+        "command": "vivadoProjectExplorer.selectTreeSource",
+        "title": "%command.scanSources%",
+        "category": "Vivado",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "vivadoProjectExplorer.reloadProject",
+        "title": "%command.reloadProject%",
+        "category": "Vivado",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "vivadoProjectExplorer.copyPath",
+        "title": "%command.copyPath%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoProjectExplorer.openInstance",
+        "title": "%command.openInstance%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoProjectExplorer.openDefinition",
+        "title": "%command.openDefinition%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoProjectExplorer.openBlockDesign",
+        "title": "%command.openBlockDesign%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoProjectExplorer.exportSelectedFiles",
+        "title": "%command.exportSelectedFiles%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoBD.openScope",
+        "title": "%command.openScope%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoBD.refresh",
+        "title": "%command.refreshBdTree%",
+        "category": "Vivado",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vivadoWorkflow.simulate",
+        "title": "%command.simulate%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoWorkflow.synth",
+        "title": "%command.synth%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoWorkflow.impl",
+        "title": "%command.implement%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoWorkflow.bit",
+        "title": "%command.bitstream%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoWorkflow.openWaveform",
+        "title": "%command.openWaveform%",
+        "category": "Vivado"
+      },
+      {
+        "command": "vivadoProjectExplorer.explainModule",
+        "title": "%command.explainModule%",
+        "category": "Vivado"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vivadoProjectExplorer.refresh",
+          "when": "view == vivadoProjectExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "vivadoProjectExplorer.setProject",
+          "when": "view == vivadoProjectExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "vivadoProjectExplorer.reloadProject",
+          "when": "view == vivadoProjectExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "vivadoProjectExplorer.selectTreeSource",
+          "when": "view == vivadoProjectExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "vivadoBD.refresh",
+          "when": "view == vivadoBDTree",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vivadoProjectExplorer.copyPath",
+          "when": "view == vivadoProjectExplorer && viewItem == module",
+          "group": "inline"
+        },
+        {
+          "command": "vivadoProjectExplorer.openDefinition",
+          "when": "view == vivadoProjectExplorer && viewItem == module",
+          "group": "navigation"
+        },
+        {
+          "command": "vivadoBD.openScope",
+          "when": "view == vivadoProjectExplorer && viewItem == module",
+          "group": "BD@1"
+        },
+        {
+          "command": "vivadoProjectExplorer.explainModule",
+          "when": "view == vivadoProjectExplorer && viewItem == module",
+          "group": "AI@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "vivadoProjectExplorer.ai.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.ai.enabled%"
+        },
+        "vivadoProjectExplorer.ai.tool": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "opencode",
+            "dsh",
+            "zcode",
+            "generic"
+          ],
+          "default": "opencode",
+          "enumDescriptions": [
+            "%config.ai.tool.claude%",
+            "%config.ai.tool.opencode%",
+            "%config.ai.tool.dsh%",
+            "%config.ai.tool.zcode%",
+            "%config.ai.tool.generic%"
+          ],
+          "description": "%config.ai.tool%"
+        },
+        "vivadoProjectExplorer.ai.autoFallback": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.ai.autoFallback%"
+        },
+        "vivadoProjectExplorer.ai.dsh.command": {
+          "type": "string",
+          "default": "",
+          "description": "%config.ai.dsh.command%"
+        },
+        "vivadoProjectExplorer.ai.zcode.command": {
+          "type": "string",
+          "default": "",
+          "description": "%config.ai.zcode.command%"
+        },
+        "vivadoProjectExplorer.ai.generic.command": {
+          "type": "string",
+          "default": "",
+          "description": "%config.ai.generic.command%"
+        },
+        "vivadoProjectExplorer.exportMode": {
+          "type": "string",
+          "enum": [
+            "clipboard",
+            "outputChannel",
+            "command"
+          ],
+          "default": "clipboard",
+          "description": "%config.exportMode%"
+        },
+        "vivadoProjectExplorer.exportCommand": {
+          "type": "string",
+          "default": "",
+          "description": "%config.exportCommand%"
+        }
+      }
+    }
+  }
+}

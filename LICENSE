@@ -1,0 +1,12 @@
+Copyright 2026 Airtl yu
+
+Airtl contains components under different licensing terms.
+
+1. Airtl-authored source files
+Unless a file or directory states otherwise, the human-readable source code and documentation authored for this project are licensed under the Apache License, Version 2.0. A copy is provided in LICENSE-APACHE-2.0.
+
+2. Airtl native core binary
+The compiled native module at extension/Airtl/build/Release/airtl.node, including the same module when bundled in the VSIX, is excluded from Apache-2.0. Its C/C++ source code is not included in this repository. The native module is governed by Airtl's separate license and in-product authorization system. Apache-2.0 grants no rights to this module. Its use and other permissions are limited to the scope granted by a valid authorization.
+
+3. Third-party materials
+Third-party components and materials are governed by their own license terms and notices. Those terms take precedence for the relevant files.
