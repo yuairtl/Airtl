@@ -7,22 +7,32 @@ X: @yuairtl
 
 Airtl 是面向 RTL/FPGA/FPSoC 开发的 VS Code 插件，提供模块源码树、Block Design View 和 AI 开发工作流。产品目标是逐步整合原理图、PCB、FPGA 与嵌入式软件开发，让用户在同一环境中完成工程浏览、开发和调试。
 
-建议使用 **Visual Studio Code 1.126.0 或更高版本**。该版本于 2026 年 6 月发布；更早版本尚未完成全面兼容性测试，因此这是推荐版本，不代表已确认的最低版本要求。
+建议使用 **Visual Studio Code 1.126.0 或更高版本**。VS Code 1.126.0 于 2026 年 6 月发布，Airtl 第一版也于 2026 年 6 月发布；更早的 VS Code 版本尚未完成全面兼容性测试，因此 1.126.0 是推荐版本，不代表已确认的最低版本要求。
 
 Airtl is a VS Code extension for RTL/FPGA/FPSoC development, providing an RTL hierarchy tree, a Block Design View, and AI development workflows. Its goal is to bring schematic, PCB, FPGA, and embedded software development together for project browsing, development, and debugging in one environment.
 
+## 1.1.0-preview 下载 / Download
+
+- Windows x64：[直接下载 VSIX](https://github.com/yuairtl/Airtl/raw/refs/heads/main/airtl-1.1.0-preview-win32-x64.vsix)
+- Linux x64：[直接下载 VSIX](https://github.com/yuairtl/Airtl/raw/refs/heads/main/airtl-1.1.0-preview-linux-x64.vsix)
+
 ## 当前发布 / Current release
 
-**1.0.0-preview · Windows x64 · 2026-11-03**
+**1.1.0-preview · Windows x64 / Linux x64 · 2026-11-03**
 
-- [下载 VSIX / Download VSIX](airtl-1.0.0-preview-win32-x64.vsix)
-- 修复大型 SystemVerilog 接口解析崩溃及过程块源码/例化定位；Block Design 使用原生 Scene 和导航缓存。
-- OpenCode 首次启动即在同一个可见 TUI 进程中启用 API，复用当前工作区会话；未安装 CLI 时直接提示。
-- AI 消息中的任务、工程目录和工具路径以可读文本呈现；系统规则和对应技能通过独立的 system 字段传递。
+- **网表连线改进与 VHDL 状态：**本次着重改善模块间连线丢失问题。由于 VHDL 连线提取有效性尚未达到发布要求，本版暂不支持 VHDL 网表及连线提取，计划修复并验证后在下个版本恢复。
+- **Linux 版本：**本次新增 Linux x64 原生支持，提供独立 VSIX，可在 Linux 版 VS Code 中安装。
+- **SystemVerilog 编辑支持：**内置 `.v/.vh/.sv/.svh` 语法高亮；智能感知默认开启，支持 Ctrl+单击定义/类型跳转、引用查找、悬停、补全、例化签名提示、局部重命名及建议修复。编辑器分析与网表和 Blockview 刷新分开运行。
+- **Blockview 与导航：**改进过程块中的源码/例化定位；Blockview 使用原生场景数据和缓存导航。纯 RTL 源码可直接打开 Blockview，无需 Vivado `.bd` 文件。
+- **AI Agent工具集成：**本版通过 OpenCode CLI 集成；首次启动时在同一个可见 TUI 进程中启用 API 并复用当前工作区会话。AI 消息展示可读的任务、工程目录和工具路径，系统规则与技能内容通过系统提示词传递；未安装 CLI 时给出提示。
 - 项目部分代码已开源；公开版本需要联网运行，目前全员免费开放试用。公开版本不包括 AI 辅助相关技能，需自行填写。
 - 如需 AI 辅助相关技能、AI 环境配置或离线使用，请联系 Airtl 提供。
 
-This preview fixes parsing crashes on large SystemVerilog interfaces and procedural source navigation. It uses native Scene rendering and cached navigation, starts OpenCode with its API enabled in the same visible TUI process, and sends readable task context while keeping system rules and the selected skill in the system field. Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included and must be provided by the user. Contact Airtl for AI skills, AI environment setup, or offline use.
+### 1.1.0-preview 新增与调整 / What's new in 1.1.0-preview
+
+This release focuses on reducing missing connections between modules. VHDL netlist and connection extraction are temporarily unavailable because extraction validity is not yet reliable enough; we plan to restore VHDL support in the next version after fixing and validating it. The release also adds native Linux x64 support with a separate VSIX package, built-in SystemVerilog syntax highlighting and default-on IntelliSense, and improved Blockview navigation with native scene data and navigation caching. AI Agent tool integration uses OpenCode CLI in this release; it starts its API in the same visible TUI process and reuses the active workspace session. Task context is readable and system instructions are sent separately.
+
+Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included and must be provided by the user. Contact Airtl for AI skills, AI environment setup, or offline use.
 
 ## 当前功能与发展方向 / Current Features and Roadmap
 
@@ -53,10 +63,9 @@ Companion skills are supplied separately from the extension. The release's `prom
 
 ### 4. Verilog / SystemVerilog 语言支持 / Language Support
 
-- **已实现功能：**可从模块源码树和 Block Design View 跳转到模块定义或例化位置。
-- **待实现功能：**完善编辑器中的变量定义、符号引用、结构与内联关系等语言级导航，提供接近 VS Code 软件开发的代码浏览体验。
-- **Implemented:** Navigate from the hierarchy tree and Block Design View to module definitions or instantiations.
-- **Planned:** Add editor-level navigation for variable definitions, symbol references, and structural and inline relationships, improving the HDL editing experience in VS Code.
+- **本版支持：**Verilog/SystemVerilog 源码解析与 Blockview；内置语法高亮和 SystemVerilog 智能感知，包括 Ctrl+单击定义/类型跳转、查找引用、悬停、补全、例化签名提示及局部重命名。
+- **Supported in this release:** Verilog/SystemVerilog source analysis and Blockview, built-in syntax highlighting, and SystemVerilog IntelliSense for Ctrl+click navigation, references, hover, completion, instantiation signature help, and local rename.
+- **VHDL status:** VHDL netlist and connection extraction are temporarily unavailable because connection validity does not meet the release bar. We plan to restore support in the next version after fixing and validating extraction.
 
 ### 5. 模块源码树 / RTL Hierarchy Tree
 
@@ -88,8 +97,8 @@ Companion skills are supplied separately from the extension. The release's `prom
 
 ## 环境要求 / Requirements
 
-- 当前 VSIX 为 **Windows x64** 版本。推荐使用 **VS Code 1.126.0 或更高版本**（1.126 发布于 2026-06-24）；旧版本未经过完整兼容性测试，这不是已确认的最低版本要求。Linux 需要单独构建的原生模块包。
-- The current VSIX targets **Windows x64**. **VS Code 1.126.0 or later** is recommended (1.126 was released on 2026-06-24). Older versions have not been fully tested; this is a recommendation, not a confirmed minimum requirement. Linux requires a separately built native package.
+- 本次提供 **Windows x64** 与 **Linux x64** 两个 VSIX，需按目标系统选择对应安装包。推荐使用 **VS Code 1.126.0 或更高版本**（1.126 发布于 2026-06-24）；旧版本未经过完整兼容性测试，这不是已确认的最低版本要求。
+- This release provides separate **Windows x64** and **Linux x64** VSIX packages. Install the package for your target platform. **VS Code 1.126.0 or later** is recommended (1.126 was released on 2026-06-24). Older versions have not been fully tested; this is a recommendation, not a confirmed minimum requirement.
 - 浏览已有工程文件不要求安装 Vivado；执行仿真、综合、实现或生成 Bit 需要本机 Vivado 和有效的工程许可。
 - Vivado is not required just to browse existing project files. Running simulation, synthesis, implementation, or bitstream generation requires a local Vivado installation and a valid project license.
 - AI 功能默认使用 OpenCode **CLI**。推荐使用已完成集成实测的 **OpenCode 1.18.35**，其他版本未逐一验证。需要安装 CLI、配置可用的模型服务和模型。只安装 OpenCode 的 VS Code 编辑器扩展不够。
@@ -101,8 +110,8 @@ Companion skills are supplied separately from the extension. The release's `prom
 
 ## 安装与开始 / Install and get started
 
-1. 在 VS Code 扩展面板选择 `...` → **Install from VSIX...**，安装仓库中的 `airtl-<版本>-win32-x64.vsix`。<br>
-   In VS Code, open Extensions, select `...` → **Install from VSIX...**, and choose `airtl-<version>-win32-x64.vsix`.
+1. 在 VS Code 扩展面板选择 `...` → **Install from VSIX...**，按系统安装 `airtl-1.1.0-preview-win32-x64.vsix`（Windows）或 `airtl-1.1.0-preview-linux-x64.vsix`（Linux）。<br>
+   In VS Code, open Extensions, select `...` → **Install from VSIX...**, and choose `airtl-1.1.0-preview-win32-x64.vsix` (Windows) or `airtl-1.1.0-preview-linux-x64.vsix` (Linux).
 2. 使用 VS Code 打开 Vivado 工程目录。<br>
    Open the Vivado project folder in VS Code.
 3. 在左侧 **源码树** 中展开 **工程来源**，选择 `.xpr`、工程 Tcl 或 HDL 顶层文件，然后刷新。<br>

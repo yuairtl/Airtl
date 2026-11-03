@@ -2,7 +2,11 @@
   "name": "airtl",
   "displayName": "Airtl",
   "description": "%extension.description%",
-  "version": "1.0.0-preview",
+  "version": "1.1.0-preview",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuairtl/Airtl"
+  },
   "license": "SEE LICENSE IN LICENSE",
   "author": "Airtl yu <yuairtl@outlook.com>",
   "icon": "icon.png",

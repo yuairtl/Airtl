@@ -2,6 +2,8 @@
 
 **Airtl 是面向 RTL/FPGA/FPSoC 开发的 VS Code 插件。** 核心体验是直接从 Verilog/SystemVerilog 源码生成模块 Blockview：即使没有 Vivado 工程，也可以从源码文件建立模块层次、查看端口和网络连接，并在源码与图形视图之间定位。已有 Vivado 工程时，还可读取 `.xpr` 和工程上下文。
 
+**1.1.0-preview 提供 Windows x64 与 Linux x64 安装包。** [Windows x64 下载](https://github.com/yuairtl/Airtl/raw/refs/heads/main/airtl-1.1.0-preview-win32-x64.vsix) · [Linux x64 下载](https://github.com/yuairtl/Airtl/raw/refs/heads/main/airtl-1.1.0-preview-linux-x64.vsix)。推荐使用 VS Code 1.126.0 或更高版本；该推荐版本和 Airtl 第一版均于 2026 年 6 月发布。
+
 ![右键工程实例并打开模块 Blockview](media/rtl-to-blockview.gif)
 
 ## 从纯源码直接打开 Blockview
@@ -31,6 +33,8 @@ Airtl 自带 `.v/.vh/.sv/.svh` 语法高亮，不依赖其他 Verilog 插件。�
 - 根据 Slang 预处理上下文淡化未生效的条件编译代码；工程宏和 include 路径参与编辑器分析。
 
 语法分析和工程级智能感知会随当前编辑内容更新。源码编辑分析与工程网表、布局和 Blockview 刷新分开运行；语义索引更新不会因每次输入而重建整张设计图。可在设置 `airtl.systemverilog.intelliSense.enabled` 中关闭智能感知，减少后台索引开销。
+
+> **VHDL 版本说明：**1.1.0-preview 暂时移除 VHDL 网表及连线提取支持。由于连线提取有效性尚未达到发布要求，本版不提供 VHDL Blockview；计划在下个版本完成修复和验证后恢复。
 
 ![在 SystemVerilog always_ff 代码中 Ctrl+单击变量并跳到声明](media/systemverilog-symbol-navigation.gif)
 

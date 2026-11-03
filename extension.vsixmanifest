@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Language="en-US" Id="airtl" Version="1.0.0-preview" Publisher="local" />
+    <Identity Language="en-US" Id="airtl" Version="1.1.0-preview" Publisher="local" />
     <DisplayName>Airtl</DisplayName>
     <Description xml:space="preserve">%extension.description%</Description>
     <Tags>vivado,fpga,rtl,verilog,systemverilog,vhdl,hierarchy,block design,xilinx,amd</Tags>
