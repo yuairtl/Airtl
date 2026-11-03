@@ -26,6 +26,10 @@
     "Other"
   ],
   "activationEvents": [
+    "onLanguage:verilog",
+    "onLanguage:systemverilog",
+    "onCommand:airtl.focus",
+    "onView:vivadoProjectSource",
     "onView:vivadoProjectExplorer",
     "onView:vivadoBDTree",
     "onView:vivadoWorkflow",
@@ -34,8 +38,114 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "verilog",
+        "aliases": [
+          "Verilog",
+          "verilog"
+        ],
+        "extensions": [
+          ".v",
+          ".vh"
+        ]
+      },
+      {
+        "id": "systemverilog",
+        "aliases": [
+          "SystemVerilog",
+          "systemverilog"
+        ],
+        "extensions": [
+          ".sv",
+          ".svh"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "verilog",
+        "scopeName": "source.systemverilog.airtl",
+        "path": "./syntaxes/systemverilog.tmLanguage.json"
+      },
+      {
+        "language": "systemverilog",
+        "scopeName": "source.systemverilog.airtl",
+        "path": "./syntaxes/systemverilog.tmLanguage.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "airtlPort",
+        "superType": "parameter",
+        "description": "Named port at a module instance connection"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "verilog",
+        "scopes": {
+          "macro": [
+            "entity.name.function.preprocessor"
+          ],
+          "variable.readonly": [
+            "entity.name.function.preprocessor"
+          ],
+          "enumMember": [
+            "entity.name.function.preprocessor"
+          ],
+          "parameter": [
+            "variable.parameter"
+          ],
+          "airtlPort": [
+            "variable.parameter"
+          ]
+        }
+      },
+      {
+        "language": "systemverilog",
+        "scopes": {
+          "macro": [
+            "entity.name.function.preprocessor"
+          ],
+          "variable.readonly": [
+            "entity.name.function.preprocessor"
+          ],
+          "enumMember": [
+            "entity.name.function.preprocessor"
+          ],
+          "parameter": [
+            "variable.parameter"
+          ],
+          "airtlPort": [
+            "variable.parameter"
+          ]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[verilog]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "[systemverilog]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "airtl",
+          "title": "%view.airtlContainer%",
+          "icon": "./media/airtl-activity.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "airtl": [
+        {
+          "id": "vivadoProjectSource",
+          "name": "%view.projectSource%"
+        },
         {
           "id": "vivadoProjectExplorer",
           "name": "%view.projectTree%"
@@ -51,6 +161,11 @@
       ]
     },
     "commands": [
+      {
+        "command": "airtl.focus",
+        "title": "%command.openAirtl%",
+        "category": "Airtl"
+      },
       {
         "command": "vivadoProjectExplorer.refresh",
         "title": "%command.refreshTree%",
@@ -140,6 +255,11 @@
         "command": "vivadoProjectExplorer.explainModule",
         "title": "%command.explainModule%",
         "category": "Vivado"
+      },
+      {
+        "command": "airtl.systemverilog.lint",
+        "title": "%command.svLint%",
+        "category": "Airtl"
       }
     ],
     "menus": {
@@ -151,17 +271,17 @@
         },
         {
           "command": "vivadoProjectExplorer.setProject",
-          "when": "view == vivadoProjectExplorer",
+          "when": "view == vivadoProjectSource",
           "group": "navigation"
         },
         {
           "command": "vivadoProjectExplorer.reloadProject",
-          "when": "view == vivadoProjectExplorer",
+          "when": "view == vivadoProjectSource",
           "group": "navigation"
         },
         {
           "command": "vivadoProjectExplorer.selectTreeSource",
-          "when": "view == vivadoProjectExplorer",
+          "when": "view == vivadoProjectSource",
           "group": "navigation"
         },
         {
@@ -196,6 +316,14 @@
     "configuration": {
       "title": "%config.title%",
       "properties": {
+        "vivadoProjectExplorer.generatedIpImplementationFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Explicit generated IP implementation files to load on the next project refresh (absolute paths or paths relative to the project). Other generated netlists supply declaration boundaries only. Encrypted files and stubs remain boundaries."
+        },
         "vivadoProjectExplorer.ai.enabled": {
           "type": "boolean",
           "default": true,
@@ -254,6 +382,110 @@
           "type": "string",
           "default": "",
           "description": "%config.exportCommand%"
+        },
+        "airtl.systemverilog.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.sv.enabled%"
+        },
+        "airtl.systemverilog.intelliSense.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.sv.intelliSense%"
+        },
+        "airtl.systemverilog.intelliSense.debounceMs": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "%config.sv.intelliSenseDebounce%"
+        },
+        "airtl.systemverilog.syntaxDebounceMs": {
+          "type": "integer",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "%config.sv.debounce%"
+        },
+        "airtl.systemverilog.dimInactiveCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.sv.dimInactiveCode%"
+        },
+        "airtl.systemverilog.standard": {
+          "type": "string",
+          "enum": [
+            "1800-2017",
+            "1800-2023"
+          ],
+          "default": "1800-2017",
+          "description": "%config.sv.standard%"
+        },
+        "airtl.systemverilog.project.fileList": {
+          "type": "string",
+          "default": "",
+          "description": "%config.sv.fileList%"
+        },
+        "airtl.systemverilog.lint.mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "slang",
+            "vendor",
+            "both"
+          ],
+          "default": "slang",
+          "description": "%config.sv.lintMode%"
+        },
+        "airtl.systemverilog.lint.vendor": {
+          "type": "string",
+          "enum": [
+            "none",
+            "vivado",
+            "quartus",
+            "verilator",
+            "custom"
+          ],
+          "default": "none",
+          "description": "%config.sv.vendor%"
+        },
+        "airtl.systemverilog.lint.vendorTrigger": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "onSave"
+          ],
+          "default": "manual",
+          "description": "%config.sv.vendorTrigger%"
+        },
+        "airtl.systemverilog.lint.target": {
+          "type": "string",
+          "enum": [
+            "synthesis",
+            "simulation"
+          ],
+          "default": "synthesis",
+          "description": "%config.sv.target%"
+        },
+        "airtl.systemverilog.lint.toolPath": {
+          "type": "string",
+          "default": "",
+          "description": "%config.sv.toolPath%"
+        },
+        "airtl.systemverilog.lint.toolArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.sv.toolArgs%"
+        },
+        "airtl.systemverilog.lint.timeoutMs": {
+          "type": "integer",
+          "default": 30000,
+          "minimum": 1000,
+          "maximum": 120000,
+          "description": "%config.sv.timeout%"
         }
       }
     }

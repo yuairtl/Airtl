@@ -7,13 +7,15 @@ X: @yuairtl
 
 Airtl 是面向 RTL/FPGA/FPSoC 开发的 VS Code 插件，提供模块源码树、Block Design View 和 AI 开发工作流。产品目标是逐步整合原理图、PCB、FPGA 与嵌入式软件开发，让用户在同一环境中完成工程浏览、开发和调试。
 
+建议使用 **Visual Studio Code 1.126.0 或更高版本**。该版本于 2026 年 6 月发布；更早版本尚未完成全面兼容性测试，因此这是推荐版本，不代表已确认的最低版本要求。
+
 Airtl is a VS Code extension for RTL/FPGA/FPSoC development, providing an RTL hierarchy tree, a Block Design View, and AI development workflows. Its goal is to bring schematic, PCB, FPGA, and embedded software development together for project browsing, development, and debugging in one environment.
 
 ## 当前发布 / Current release
 
-**1.0.0-preview · Windows x64 · 2026-10-17**
+**1.0.0-preview · Windows x64 · 2026-11-03**
 
-- [下载 VSIX / Download VSIX](https://github.com/yuairtl/Airtl/releases/tag/v1.0.0-preview)
+- [下载 VSIX / Download VSIX](airtl-1.0.0-preview-win32-x64.vsix)
 - 修复大型 SystemVerilog 接口解析崩溃及过程块源码/例化定位；Block Design 使用原生 Scene 和导航缓存。
 - OpenCode 首次启动即在同一个可见 TUI 进程中启用 API，复用当前工作区会话；未安装 CLI 时直接提示。
 - AI 消息中的任务、工程目录和工具路径以可读文本呈现；系统规则和对应技能通过独立的 system 字段传递。

@@ -1,1 +1,1 @@
-d817ddebdb316dfdadbbb8c762cc111d8ed04eda890c36a2e00d562636e87ddf  airtl-1.0.0-preview-win32-x64.vsix
+93a228dd52db7737edd8f468ef47028e4cab3e8facc9f854b0860e1e8e27e767  airtl-1.0.0-preview-win32-x64.vsix

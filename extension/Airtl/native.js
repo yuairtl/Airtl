@@ -94,6 +94,10 @@ module.exports = {
   // 在 JS 侧（ui_design/vivado.js）。不传，装在 C/D/E 之外的用户设置了一半。
   graphLoad: (v, opts) => { if (!native || typeof native.graphLoad !== 'function') throw new Error('airtl: graphLoad 只有原生实现'); return native.graphLoad(v, opts === undefined ? {} : opts); },
   graphFree: (v) => { if (!native || typeof native.graphFree !== 'function') throw new Error('airtl: graphFree 只有原生实现'); return native.graphFree(v); },
+  graphReadNodes: pick('graphReadNodes'),
+  graphFactVersion: pick('graphFactVersion'),
+  graphReadFacts: pick('graphReadFacts'),
+  graphCheckpoint: pick('graphCheckpoint'),
   graphInvalidate: (v, w) => { if (!native || typeof native.graphInvalidate !== 'function') throw new Error('airtl: graphInvalidate 只有原生实现'); return native.graphInvalidate(v, w); },
   graphStats: (v) => { if (!native || typeof native.graphStats !== 'function') throw new Error('airtl: graphStats 只有原生实现'); return native.graphStats(v); },
   graphDump: (v) => { if (!native || typeof native.graphDump !== 'function') throw new Error('airtl: graphDump 只有原生实现'); return native.graphDump(v); },
@@ -115,6 +119,7 @@ module.exports = {
 
   graphTopCandidates: (v) => { if (!native || typeof native.graphTopCandidates !== 'function') throw new Error('airtl: graphTopCandidates 只有原生实现'); return native.graphTopCandidates(v); },
   // 只要 L2 层次树（树视图用）——不走 renderScope，省掉 L3/L4
+  graphSlangElaboration: (v) => { if (!native || typeof native.graphSlangElaboration !== 'function') throw new Error('airtl: graphSlangElaboration 只有原生实现'); return native.graphSlangElaboration(v); },
   graphHierarchy: (v, w) => { if (!native || typeof native.graphHierarchy !== 'function') throw new Error('airtl: graphHierarchy 只有原生实现'); return native.graphHierarchy(v, w); },
   // Phase 2：L2(buildModuleScope)→L3(prepareScopeForUI)→L4(layoutScope) 一次调用
   renderScope: (v, w, x) => { if (!native || typeof native.renderScope !== 'function') throw new Error('airtl: renderScope 只有原生实现'); return native.renderScope(v, w, x); },
@@ -132,6 +137,8 @@ module.exports = {
   looksLikePrimitive: pick('looksLikePrimitive'),
   parseVerilogPorts: pick('parseVerilogPorts'),
   parseVhdlPorts: pick('parseVhdlPorts'),
+  svParseText: pick('svParseText'),
+  svIndexText: pick('svIndexText'),
   extractInstancesFull: pick('extractInstancesFull'),
   parseFileBody: pick('parseFileBody'),
   buildHierarchyFromDefs: pick('buildHierarchyFromDefs'),

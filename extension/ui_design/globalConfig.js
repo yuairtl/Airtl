@@ -22,7 +22,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const CONFIG_DIR = 'C:/userconfig/rtlassistant';   // 用户指定全局配置目录
+const CONFIG_DIR = process.env.AIRTL_CONFIG_DIR || (process.platform === 'win32'
+  ? 'C:/userconfig/rtlassistant' : path.join(os.homedir(), 'rtlassistant'));
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 // 探测 Vivado（常见安装目录，取最新版本）
@@ -80,16 +81,14 @@ function getManifestPath() { return path.join(CONFIG_DIR, '.vivado-manifest.json
 //   Linux  ：C:/ 在 Node 下会被当相对路径建脏目录，故改用用户主目录下 rtlassistant/ip-ports.json
 // 读取（ipPortData.loadExternalPortData）与写入（AI 抓取工作流）均用此路径，保证两端一致。
 function getIpPortsPath() {
-  if (process.platform === 'win32') return path.join(CONFIG_DIR, 'ip-ports.json');
-  return path.join(os.homedir(), 'rtlassistant', 'ip-ports.json');
+  return path.join(CONFIG_DIR, 'ip-ports.json');
 }
 
 // 全局级 IP 手册 PDF 下载目录（与 ip-ports.json 同根，跨平台一致）：
 //   Windows：C:/userconfig/rtlassistant/ipdowns/
 //   Linux  ：~rtlassistant/ipdowns/
 function getIpDownloadsDir() {
-  if (process.platform === 'win32') return path.join(CONFIG_DIR, 'ipdowns');
-  return path.join(os.homedir(), 'rtlassistant', 'ipdowns');
+  return path.join(CONFIG_DIR, 'ipdowns');
 }
 
 module.exports = {

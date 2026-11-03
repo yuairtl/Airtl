@@ -133,7 +133,7 @@ class WorkflowProvider {
     // 它的其余消费者只有 blockgraph.js（不随包发布）。出包产品里只剩这一处
     // 调用，直接调原生即可，省掉整个文件。
     const airtl = require(path.join(__dirname, '..', 'Airtl', 'index.js'));
-    const norm = airtl.normalizeIpName(ipType);
+    const norm = ipType;
     const projDir = this._getProjDir();
     if (!projDir) { vscode.window.showErrorMessage(t('未找到工程目录', 'Project directory not found')); return; }
     const gc = require('./globalConfig');

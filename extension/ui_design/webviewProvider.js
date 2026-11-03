@@ -35,6 +35,9 @@ const gp = require('./graphProvider');
 const rw = require('./rtlwriter');
 
 let panel = null;
+let scenePendingPanelReveal = null;
+let focusWhenPanelRevealed = null;
+let lastSceneShownInPanel = null;
 let epoch = 0;
 let lastRender = null;
 let selectedKeys = new Set();
@@ -57,72 +60,36 @@ function basename(p) {
 // xprMissing：加载失败（工作区无 .xpr）的负标记。无此标记时，startAutoLoadTree 的守卫
 // 「bdState.G && bdState.proj」在加载失败后仍为假 → 每次树刷新都重试 loadGraph → 反复弹
 // 警告 + refresh → 死循环（BUG1）。加载成功时清除，手动刷新时也清除以便用户设置工程后重试。
-const bdState = { proj: null, G: null, hdlFiles: [], topResolved: '', autoLoading: false, xprMissing: false };
+const bdState = { proj: null, G: null, hdlFiles: [], topResolved: '', autoLoading: false, xprMissing: false, loadError: '' };
 
-// BD 设计源（.bd JSON）的聚合指纹：任一 .bd 的 mtime/size 变化都算「BD 已改」。
-// 【为何需要】改 Block Design 后 .xpr 往往不变，此前 loadGraph 只看来源文件的 mtime
-// → 一直复用旧 G，用户看到的是修改前的 BD 结构与连线。
-function bdFilesStamp(bdFiles) {
-  let maxM = 0, sumSize = 0, n = 0;
-  for (const bf of (bdFiles || [])) {
-    try {
-      const s = fs.statSync(bf.path);
-      if (s.mtimeMs > maxM) maxM = s.mtimeMs;
-      sumSize += s.size; n++;
-    } catch (e) { /* 读不到忽略（被删/无权限） */ }
-  }
-  return n + ':' + Math.round(maxM) + ':' + sumSize;
+function instanceIdentity(context) {
+  return JSON.stringify([context.handle, context.rootModule, context.rootParams || {}, context.instances || []]);
+}
+function currentScopeContext(context) {
+  if (!context) return true; // Standalone module command.
+  if (G && context.handle === G.handle && bdState.G === G && bdState.proj &&
+      (!context.projectKey || context.projectKey === bdState.proj.srcKey)) return true;
+  vscode.window.showInformationMessage(t('工程已更新，请重新选择树节点', 'The project changed. Select the tree node again.'));
+  return false;
 }
 
 // 加载工程图（树与面板共用；G 已加载且「来源文件 + BD 文件」均未变则复用）
 // opts.silent=true 时失败不弹窗（后台自动加载用；Vivado Hierarchy 树已提示过无 xpr，避免重复打扰）
-async function loadGraph(opts) {
-  const silent = !!(opts && opts.silent);
-  // 工程来源（xpr / tcl / 源文件）统一由 projectSource 解析（与 Vivado Hierarchy 树同源同缓存）
-  const roots = (vscode.workspace.workspaceFolders || []).map(w => w.uri.fsPath);
-  if (!roots.length) {
-    bdState.xprMissing = true;
-    if (!silent) vscode.window.showWarningMessage(t('未打开工作区文件夹，无法加载 BD 工程', 'No workspace folder is open. Cannot load the Block Design project.'));
-    return false;
-  }
-  // 来源由 Vivado Hierarchy 视图的「选择工程来源」在界面上选定并写入工作区缓存；
-  // BD 图与层次树同源（不重扫、不读 settings）。
-  const src = ps.resolveCachedAny(roots);
-  if (!src) {
-    bdState.xprMissing = true;      // 负标记：后续 startAutoLoadTree 不再反复尝试
-    if (!silent) vscode.window.showWarningMessage(t('尚未选择工程来源：请先在「源码树」视图点「选择工程来源」（扫描 .xpr / tcl / 源文件后选定）', 'No project source selected. Choose one from Project Sources (scan for an XPR, Tcl script, or HDL source).'));
-    return false;
-  }
-  const srcKey = src.mode + ':' + src.path;
-  let srcMtime = 0;
-  try { srcMtime = fs.statSync(src.path).mtimeMs; } catch (e) { }
-  // BD 文件实时指纹：与上次加载时记录的值比较（任一 .bd 改动 → 缓存失效重载）
-  const bdStampNow = bdFilesStamp(bdState.proj && bdState.proj.bdFiles);
-  if (bdState.G && bdState.proj && bdState.proj.srcKey === srcKey && bdState.proj.srcMtime === srcMtime
-      && bdState.proj.bdStamp === bdStampNow) {
-    bdState.xprMissing = false;
-    return true;
-  }
-  const proj = ps.loadProject(src, roots);
-  proj.srcKey = srcKey; proj.srcMtime = srcMtime; proj.mode = src.mode; proj.xpr = src.path;
-  proj.bdStamp = bdFilesStamp(proj.bdFiles);
-  hdlFiles = proj.srcFiles.concat(proj.ipFiles, proj.simFiles);
-  // 一律以 Vivado【生成后的 HDL】建网表（用户裁定 2026-09-17：不强调 GUI 同步，强调 generate 后同步）：loadProjectGraph 会把 .bd 的生成 HDL(<bd>.v) 主动并入 HDL 分析集。
-  // 旧图先释放：native 后端下 G 持有 GraphStore handle，不释放就每加载一次漏一个
-  const previousGraph = G;
-  G = gp.loadGraph(hdlFiles, { bdFiles: proj.bdFiles || [], workspaceDir: roots[0] || null });
-  if (previousGraph) gp.freeGraph(previousGraph);
-  bdState.proj = proj; bdState.G = G; bdState.hdlFiles = hdlFiles;
-  let top = proj.designTop || proj.top;
-  if (!top || !G.moduleDefs.has(top)) {
-    const picked = pickTopLevelFromCands(G.topCandidates || []);
-    top = picked ? picked.name : top;
-  }
-  bdState.topResolved = top || '';
-  bdState.xprMissing = false;
-  return !!top;
+let graphLoadTask = null, graphLoadGeneration = 0;
+function loadGraph(opts) {
+  if (graphLoadTask) return graphLoadTask;
+  const generation = graphLoadGeneration;
+  const task = performLoadGraph(opts, generation).finally(() => { if (graphLoadTask === task) graphLoadTask = null; });
+  graphLoadTask = task; return task;
 }
-
+async function performLoadGraph() {
+  const session=require('../designSession');
+  const state=session.read() || await session.readReady();
+  if(!state){bdState.xprMissing=true;return false;}
+  G=state.graph;hdlFiles=G.paths;bdState.G=G;bdState.proj=state.proj;
+  bdState.hdlFiles=hdlFiles;bdState.treeProjection=state.treeProjection;bdState.topResolved=state.hierarchy.top;
+  bdState.xprMissing=false;bdState.loadError='';return true;
+}
 // BD 树后台自动加载：打开即触发（async，不阻塞，进度条正常完成，完成后自动 refresh 树）
 function startAutoLoadTree() {
   if (bdState.G && bdState.proj) return;       // 已有数据
@@ -133,9 +100,16 @@ function startAutoLoadTree() {
     { location: vscode.ProgressLocation.Notification, title: t('加载 BD 工程…', 'Loading Block Design…') },
     async () => {
       await new Promise(r => setImmediate(r));   // 让事件循环先返回，避免同步解析阻塞进度条
-      try { await loadGraph({ silent: true }); } catch (e) { outCh.appendLine('[bd][auto-load] ' + e.message); }
-      bdState.autoLoading = false;
-      try { bdTreeProvider && bdTreeProvider.refresh(); } catch (e) { }
+      try {
+        await loadGraph({ silent: true });
+      } catch (e) {
+        if (e.code === 'AIRTL_REQUEST_SUPERSEDED') return;
+        bdState.loadError = String(e && (e.message || e) || '未知错误');
+        outCh.appendLine('[bd][auto-load] ' + bdState.loadError);
+      } finally {
+        bdState.autoLoading = false;
+        try { bdTreeProvider && bdTreeProvider.refresh(); } catch (e) { }
+      }
     }
   );
 }
@@ -145,12 +119,44 @@ function startAutoLoadTree() {
 // 还有备选，出问题时先去切切换器而不是去查原生库为什么没加载。
 // 引擎信息保留在 activate 的那行日志里（[engine] …），足够定位问题。
 function activate(context) {
-  if(vscode.workspace.onDidChangeTextDocument)context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e=>sourceChanged(e.document,false)));
+  const session=require('../designSession');
+  context.subscriptions.push(session.subscribe(async state=>{
+    const previousKey=bdState.proj?.srcKey;
+    ++graphLoadGeneration;graphLoadTask=null;++epoch;
+    if(!state){
+      gp.cancelSceneRequests(G);G=null;bdState.G=null;bdState.proj=null;lastRender=null;currentSceneRecord=null;scopeContext=null;selectedKeys=new Set();
+      if(panel)panel.webview.postMessage({type:'clear',message:t('正在切换工程','Switching project')});
+    }else{
+      G=state.graph;hdlFiles=G.paths;bdState.G=G;bdState.proj=state.proj;bdState.hdlFiles=hdlFiles;
+      bdState.treeProjection=state.treeProjection;bdState.topResolved=state.hierarchy.top;bdState.xprMissing=false;bdState.loadError='';
+      if(panel){
+        const restore=previousKey===state.proj.srcKey&&scopeContext&&G.moduleDefs.has(scopeContext.rootModule);
+        if(!restore)selectedKeys=new Set();
+        let target=restore?scopeModule:bdState.topResolved;
+        let restoredContext=restore?{...scopeContext,handle:G.handle}:undefined;
+        if (restoredContext?.analysisVersion) {
+          const graph=G, hierarchy=await gp.hierarchyFor(graph, restoredContext.rootModule);
+          if (G!==graph) return;
+          if (hierarchy.analysisVersion && !Object.keys(restoredContext.rootParams || {}).length)
+            restoredContext.analysisVersion=hierarchy.analysisVersion;
+          else { restoredContext=undefined; target=bdState.topResolved; }
+        }
+        await openScope(target,null,null,null,null,restoredContext);
+      }
+    }
+    if(bdTreeProvider)bdTreeProvider.refresh();
+  }));
+  if(vscode.workspace.onDidChangeTextDocument)context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e=>{
+    // VS Code also emits this event for document state changes. Only source
+    // edits can invalidate the source positions of an immutable diagram.
+    if (Array.isArray(e.contentChanges) && e.contentChanges.length === 0) return;
+    sourceChanged(e.document,false,e.contentChanges);
+  }));
   if(vscode.workspace.onDidSaveTextDocument)context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(d=>sourceChanged(d,true)));
 
   _ctx = context;
   context.subscriptions.push({ dispose() {
-    if (G) gp.freeGraph(G);
+    graphLoadGeneration++; graphLoadTask = null;
     G = null;
     bdState.G = null;
   } });
@@ -166,7 +172,7 @@ function activate(context) {
       const oi = (n.cell && n.cell.instanceFile)
         ? { file: n.cell.instanceFile, line: n.cell.instanceLine || 0 }
         : (n.instanceFile ? { file: n.instanceFile, line: n.instanceLine || 0 } : null);
-      return openScopeFor(n.moduleName || n.module, oi);     // 带上「该模块在父级被例化的位置」
+      return openScopeFor(n.moduleName || n.module, oi, (n.cell || n).scopeContext);
     }),
     vscode.commands.registerCommand('vivadoBD.focusInstance', (arg) => focusInstance(typeof arg === 'string' ? { moduleName: arg } : arg)),
     vscode.commands.registerCommand('vivadoBD.locateInstanceBg', (arg) => locateInstanceBg(arg)),
@@ -176,30 +182,9 @@ function activate(context) {
       const oi = (n.cell && n.cell.instanceFile)
         ? { file: n.cell.instanceFile, line: n.cell.instanceLine || 0 }
         : (n.instanceFile ? { file: n.instanceFile, line: n.instanceLine || 0 } : null);
-      return openScopeBg(n.moduleName || n.module, oi);
+      return openScopeBg(n.moduleName || n.module, oi, (n.cell || n).scopeContext);
     }),
-    vscode.commands.registerCommand('vivadoBD.refresh', async () => {
-      // 刷新 BD 树（含数据重载）。【利用缓存】：不 clearGraphCache 全量丢缓存——
-      // loadProjectGraph 内部有文件级缓存（mtime+size 失效），源码没变时秒级复用、
-      // 源码变了只重解析变化的文件；bdState.G=null 强制下次 loadGraph 重新组装树数据。
-      // xprMissing 一并清除：用户可能刚在 Vivado Hierarchy 里设置了工程，允许重新尝试加载。
-      bdState.G = null; bdState.proj = null; bdState.xprMissing = false;
-      if (G || panel) {
-        if (await loadGraph({ silent: true })) {
-          if (panel) {
-            const restoreContext = scopeContext && G.moduleDefs.has(scopeContext.rootModule);
-            const current = restoreContext || G.moduleDefs.has(scopeModule) ? scopeModule : bdState.topResolved;
-            await openScope(current, current === scopeModule ? scopeParentParams : null, null,
-              current === scopeModule && lastRender ? lastRender.originInst : null, null, restoreContext ? scopeContext : undefined);
-          }
-        } else {
-          if (G) gp.freeGraph(G);
-          G = null; bdState.G = null; lastRender = null;
-          if (panel) panel.webview.postMessage({ type: 'error', message: t('无法加载当前工程来源', 'Could not load the selected project source') });
-        }
-      }
-      bdTreeProvider && bdTreeProvider.refresh();
-    })
+    vscode.commands.registerCommand('vivadoBD.refresh', () => { if(bdTreeProvider)bdTreeProvider.refresh(); })
   );
   // BD 设计树（独立于 Vivado Hierarchy，共用同一份解析数据）
   bdTreeProvider = new BDBTreeProvider(bdState);
@@ -330,7 +315,7 @@ function revealPanel() {
 }
 
 // 点击树节点 → 直接打开该模块的 UI 作用域
-async function openScopeFor(moduleName, originInst) {
+async function openScopeFor(moduleName, originInst, context) {
   if (!G || !G.moduleDefs.has(moduleName)) {
     if (!(await loadGraph())) return;
   }
@@ -338,10 +323,11 @@ async function openScopeFor(moduleName, originInst) {
     vscode.window.showErrorMessage(t('未找到模块 ', 'Module not found: ') + moduleName);
     return;
   }
+  if (!currentScopeContext(context)) return;
   selectedKeys = new Set();
   ensurePanel('BD: ' + moduleName);
   revealPanel();   // 显式打开/跳到模块 UI 时，主内容（BD 画布）置前台
-  await openScope(moduleName, null, null, originInst);
+  await openScope(moduleName, null, null, originInst, null, context);
   // 面板打开成功（数据已加载）→ 刷新 BD 树，使其显示真实分区/顶层/子实例
   try { bdTreeProvider && bdTreeProvider.refresh(); } catch (e) { }
 }
@@ -351,32 +337,59 @@ async function openScopeFor(moduleName, originInst) {
 // 与 Vivado Hierarchy 树一致：单跳「例化位置」、双跳「源码定义(模块UI)」。
 const BD_DBL_MS = 350;
 let lastBDFocus = { key: null, time: 0 };
+let bdTreeNavigationGeneration = 0;
 async function focusInstance(node) {
   if (!node) return;
+  if (!currentScopeContext(node.scopeContext)) return;
+  const clickGeneration = ++bdTreeNavigationGeneration;
   revealPanel();   // BD 树点击：主内容（BD 画布）置前台
-  const key = (node.inst || '') + '@' + (node.moduleName || '') + '@' + (node.parentScope || '');
+  const key = node.scopeContext ? instanceIdentity(node.scopeContext) :
+    (node.inst || '') + '@' + (node.moduleName || '') + '@' + (node.parentScope || '');
   const now = Date.now();
   if (lastBDFocus.key === key && (now - lastBDFocus.time) < BD_DBL_MS) {
     lastBDFocus.key = null;                       // 消费第二击
     bdSuppressToggle = key;                        // 标记：随后原生折叠/展开需撤销
     setTimeout(() => { bdSuppressToggle = null; }, 500);
-    openScopeFor(node.moduleName);                // 双击：打开该节点模块自身的 UI
+    if (!node.parentScope) {
+      if (!G || !G.moduleDefs.has(node.moduleName))
+        return vscode.commands.executeCommand('vivadoProjectExplorer.openSimulationModuleSource', node.moduleName);
+      return openScopeFor(node.moduleName, null, node.scopeContext);
+    }
+    // Resolve the exact instance in its parent scene, then use the same native
+    // navigation record as a canvas double-click. A primitive or black box has
+    // an instantiation location, but need not have an enterable module body.
+    await focusInUI(node);
+    if (clickGeneration !== bdTreeNavigationGeneration || !currentScopeContext(node.scopeContext) || scopeModule !== node.parentScope) return;
+    if (node.scopeContext && (!scopeContext || instanceIdentity(scopeContext) !== instanceIdentity({
+      ...node.scopeContext, instances: node.scopeContext.instances.slice(0, -1),
+    }))) return;
+    const block = currentSceneRecord?.scene.blocks.find(b => b.inst === node.inst && b.type === node.moduleName);
+    if (block) return navigate({ sceneId: currentSceneRecord.scene.sceneId, objectId: block.key, action: 'open' });
   } else {
     lastBDFocus = { key, time: now };
     bdSuppressToggle = key;                        // 立即置位，覆盖第二击原生折叠/展开
     setTimeout(() => { if (lastBDFocus.key === key) { lastBDFocus.key = null; bdSuppressToggle = null; } }, BD_DBL_MS);
-    focusInUI(node);                              // 单击：定位到 UI 中的块位置
+    return focusInUI(node);
   }
 }
 
 async function focusInUI(node) {
+  if (node.scopeContext && node.scopeContext.instances.length) {
+    const context = { ...node.scopeContext, instances: node.scopeContext.instances.slice(0, -1) };
+    const inst = node.scopeContext.instances.at(-1);
+    selectedKeys = new Set(); ensurePanel('BD: ' + node.parentScope);
+    await openScope(node.parentScope, null, { inst, type: node.moduleName }, null, null, context);
+    return;
+  }
   // 顶层根节点：画布本身即该模块，无对应实例块 → 仅确保面板打开并 fit
   if (!node.parentScope) {
     if (!G || !G.moduleDefs.has(node.moduleName)) { if (!(await loadGraph())) return; }
     if (G && G.moduleDefs.has(node.moduleName)) {
       selectedKeys = new Set();
       ensurePanel('BD: ' + node.moduleName);
-      await openScope(node.moduleName);                // 无 focusInst → fitToView
+      await openScope(node.moduleName, null, null, null, null, node.scopeContext); // 无 focusInst → fitToView
+    } else {
+      await vscode.commands.executeCommand('vivadoProjectExplorer.openSimulationModuleSource', node.moduleName);
     }
     return;
   }
@@ -432,15 +445,16 @@ async function locateInstanceBg(node) {
     await openScope(parentScope, null, { inst, type: moduleName });
   }
 }
-async function openScopeBg(moduleName, originInst) {
+async function openScopeBg(moduleName, originInst, context) {
   // 兼容两种调用：字符串 moduleName 或 Vivado 树 cell {module}
   if (moduleName && typeof moduleName === 'object') moduleName = moduleName.module || moduleName.moduleName;
   if (!moduleName) return;
   if (!G || !G.moduleDefs.has(moduleName)) { if (!(await loadGraph())) return; }
   if (!G.moduleDefs.has(moduleName)) return;
+  if (!currentScopeContext(context)) return;
   selectedKeys = new Set();
   if (!panel) ensurePanel('BD: ' + moduleName, true);   // 后台创建，不抢编辑器焦点
-  await openScope(moduleName, null, null, originInst);
+  await openScope(moduleName, null, null, originInst, null, context);
 }
 
 // ---------- BD 设计树（共用 Design/Simulation 源树结构） ----------
@@ -452,7 +466,7 @@ class BDBTreeProvider {
   }
   refresh() { this._onDidChangeTreeData.fire(); }
   getTreeItem(x) { return x; }
-  getChildren(el) {
+  async getChildren(el) {
 const st = this.state;
     // BD 树打开即【后台异步自动加载】：不阻塞、进度条正常完成；完成后自动 refresh 树出内容
     if (!el && (!st.G || !st.proj)) {
@@ -460,6 +474,9 @@ const st = this.state;
       // getChildren→再加载 会形成死循环（每次都弹警告）。用户设置工程后点刷新可重试。
       if (st.xprMissing) {
         return [this.info('未找到工程：当前工作区无 .xpr（请在「源码树」中设置工程后刷新）')];
+      }
+      if (st.loadError) {
+        return [this.info('BD 工程加载失败：' + st.loadError + '（点击刷新重试）')];
       }
       startAutoLoadTree();
       return [this.info('正在加载 BD 工程（后台加载中）…')];
@@ -469,30 +486,24 @@ const st = this.state;
     }
     const cv = el.contextValue || el.ctx;
     if (cv === 'sec') {
+      const graph = st.G, project = st.proj, generation = graphLoadGeneration;
+      const current = () => graph === st.G && project === st.proj && generation === graphLoadGeneration;
+      if (!graph || !project) return [];
       if (el.kind === 'design') {
         const top = st.topResolved;
         // 顶层 verified 判定与 Vivado Hierarchy 树一致：设计树认 designTop（缺省退 simTop）
-        const designTopEff = (st.proj && (st.proj.designTop || st.proj.simTop)) || '';
-        return top ? [this.modNode(top, top, undefined, top === designTopEff)] : [this.info('（未确定顶层）')];
+        const designTopEff = project.designTop || project.simTop || '';
+        if (!top) return [this.info('（未确定顶层）')];
+        const root = st.treeProjection?.design;
+        return root ? [this.modNode(root, null, top === designTopEff)] : [];
       }
-      // Simulation：sim_1 TopModule + 其他 sim 文件的顶层模块
-      const tops = [];
-      if (st.proj.simTop) tops.push(st.proj.simTop);
-      for (const f of (st.proj.simFiles || [])) {
-        try {
-          const stripped = stripComments(fs.readFileSync(f.path, 'utf8'));
-          for (const md of extractModules(stripped, 'verilog')) tops.push(md.name);
-        } catch (e) { }
-      }
-      const uniq = [...new Set(tops)];
-      // 仿真树顶层 verified 只认 sim_1 TopModule（与 Vivado Hierarchy 仿真树一致）
-      return uniq.length
-        ? uniq.map(t => this.modNode(t, t, undefined, t === st.proj.simTop))
+      const roots = st.treeProjection?.simulation || [];
+      return roots.length ? roots.map(root => this.modNode(root, null, root.module === project.simTop))
         : [this.info('（无仿真顶层）')];
     }
     if (cv === 'mod') {
-      const def = st.G ? st.G.moduleDefs.get(el.moduleName) : null;
-      return (def ? def.instances : []).map(i => this.modNode(i.inst, i.type, el.moduleName));
+      if (el.scopeContext && el.scopeContext.handle !== st.G?.handle) return [];
+      return (el.cell?.children || []).map(child => this.modNode(child, el.moduleName));
     }
     return [];
   }
@@ -502,25 +513,27 @@ const st = this.state;
     it.iconPath = new vscode.ThemeIcon(kind === 'design' ? 'circuit-board' : 'beaker');
     return it;
   }
-  modNode(inst, moduleName, parentScope, isTop) {
-    const def = this.state.G ? this.state.G.moduleDefs.get(moduleName) : null;
-    const hasKids = !!(def && def.instances.length);
-    const file = def ? (def.file || '') : '';
-    const kind = def ? 'module' : (looksLikePrimitive(moduleName) ? 'primitive' : 'undefined');
+  modNode(cell, parentScope, isTop) {
+    const inst = cell.instance || cell.module, moduleName = cell.module;
+    const hasKids = !!cell.children?.length;
+    const file = cell.file || '';
+    const kind = cell.kind;
     const isRoot = !parentScope;
     const it = new vscode.TreeItem(inst, hasKids ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     // 描述标签与 Vivado Hierarchy 树同词汇（[源文件]/[IP生成]/[原语]/[加密IP/黑盒]）
-    it.description = moduleName + moduleKindTag(kind, file);
+    it.description = moduleName + (cell.display?.tag ?? moduleKindTag(kind, file));
     // 图标规则与 Vivado Hierarchy 树完全一致（iconRules.moduleIconId）
-    it.iconPath = new vscode.ThemeIcon(moduleIconId({ kind, file, hasChildren: hasKids, isRoot, isTop: !!isTop }));
+    it.iconPath = new vscode.ThemeIcon(cell.display?.[isRoot ? (isTop ? 'top' : 'root') : 'child'] ||
+      moduleIconId({ kind, file, hasChildren: hasKids, isRoot, isTop: !!isTop }));
     it.contextValue = 'mod';
     it.moduleName = moduleName;
     it.inst = inst;
     it.parentScope = parentScope || null;
-    it.ctxKey = (inst || '') + '@' + moduleName + '@' + (parentScope || '');
+    it.cell = cell; it.scopeContext = cell.scopeContext;
+    it.ctxKey = cell.scopeContext ? instanceIdentity(cell.scopeContext) : null;
     // 单击：在当前 UI 画布中定位该实例块（pan+高亮）；双击：打开该实例模块自身的 UI 作用域。
     // 行为对齐 Vivado Hierarchy 树（单跳例化位置 / 双跳源码定义）。
-    it.command = { command: 'vivadoBD.focusInstance', title: t('单击:定位到UI位置 / 双击:打开模块UI', 'Click: locate in diagram / double-click: open module diagram'), arguments: [{ inst, moduleName, parentScope: parentScope || null }] };
+    it.command = { command: 'vivadoBD.focusInstance', title: t('单击:定位到UI位置 / 双击:打开模块UI', 'Click: locate in diagram / double-click: open module diagram'), arguments: [{ inst, moduleName, parentScope: parentScope || null, scopeContext: cell.scopeContext }] };
     return it;
   }
   info(label) {
@@ -557,41 +570,93 @@ function ensurePanel(title, preserveFocus) {
     { enableScripts: true, localResourceRoots: [vscode.Uri.file(mediaDir)], retainContextWhenHidden: true });
   // 先挂消息监听再设 html，避免 webview 早发的 'ready' 被丢弃
   panel.webview.onDidReceiveMessage(onMessage, null, _ctx.subscriptions);
-  panel.onDidDispose(() => { panel = null; lastRender = null; currentSceneRecord = null; ++epoch; }, null, _ctx.subscriptions);
+  panel.onDidChangeViewState(event => {
+    if (!event.webviewPanel.visible) return;
+    const sceneId = lastRender && lastRender.scene ? lastRender.scene.sceneId : null;
+    if (scenePendingPanelReveal && scenePendingPanelReveal === sceneId) {
+      panel.webview.postMessage({
+        type: 'viewRevealed', sceneId, focusInst: focusWhenPanelRevealed
+      });
+    }
+    scenePendingPanelReveal = null;
+    focusWhenPanelRevealed = null;
+    lastSceneShownInPanel = sceneId;
+  }, null, _ctx.subscriptions);
+  panel.onDidDispose(() => {
+    gp.cancelSceneRequests(G); panel = null; lastRender = null; currentSceneRecord = null;
+    scenePendingPanelReveal = null; focusWhenPanelRevealed = null; lastSceneShownInPanel = null;
+    sourceLocations.clear(); ++epoch;
+  }, null, _ctx.subscriptions);
   panel.webview.html = getHtml(panel.webview, mediaDir);
 }
 
-let currentSceneRecord = null, dirtyGraph = null, scopeContext = null, historyGraph = null;
+let currentSceneRecord = null, scopeContext = null, historyGraph = null;
 let scopeHistory = [];
 const dirtyDocuments = new Set();
-function sourcePath(file) { return require('path').resolve(file || '').toLowerCase(); }
-function sourceChanged(document, saved) {
+// Positions for the displayed immutable design, adjusted only by editor edits.
+// Keep this separate from native topology: navigating never refreshes a graph.
+let sourceLocations = new Map();
+function sourcePath(file) { const resolved = path.resolve(file || ''); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; }
+function designFiles(graph) { return graph.paths.concat(graph.dependencyFiles || []); }
+function bindSourceLocations(record) {
+  sourceLocations = new Map();
+  for (const nav of Object.values(record.navigation)) for (const kind of ['definition','instantiation']) {
+    const target=nav[kind];if(!target)continue;
+    const file=sourcePath(target.file);
+    let entry=sourceLocations.get(file);
+    if(!entry) {
+      const doc=(vscode.workspace.textDocuments||[]).find(d=>d.uri&&sourcePath(d.uri.fsPath)===file);
+      entry={edited:false,lines:new Map(),initiallyDirty:!!(doc&&doc.isDirty)};sourceLocations.set(file,entry);
+    }
+    entry.lines.set(target.line,{line:target.line,valid:!entry.initiallyDirty});
+  }
+}
+function adjustSourceLocations(document, changes) {
+  const entry=sourceLocations.get(sourcePath(document.uri.fsPath));if(!entry)return;
+  entry.edited=true;
+  if(!Array.isArray(changes)) { for(const anchor of entry.lines.values())anchor.valid=false;return; }
+  // All ranges in a VS Code event refer to the previous document version.
+  const ordered=[...changes].sort((a,b)=>b.range.start.line-a.range.start.line||b.range.start.character-a.range.start.character);
+  for(const change of ordered) {
+    const {start,end}=change.range,inserted=(change.text.match(/\r\n|\r|\n/g)||[]).length;
+    const delta=inserted-(end.line-start.line);
+    for(const anchor of entry.lines.values()) {
+      if(!anchor.valid)continue;
+      const line=anchor.line-1;
+      if(line<start.line)continue;
+      if(line>end.line || (line===end.line&&end.line>start.line&&end.character===0))anchor.line+=delta;
+      else if(start.line===end.line&&start.character===0&&end.character===0)anchor.line+=inserted;
+      else anchor.valid=false; // The target line itself changed; do not guess a symbol.
+    }
+  }
+}
+function sourceChanged(document, saved, changes) {
   if (!G || !document || !document.uri) return;
+  if(!saved)adjustSourceLocations(document,changes);
   const file=sourcePath(document.uri.fsPath);
-  if (!G.paths.some(p=>sourcePath(p)===file)) return;
+  if (!designFiles(G).some(p=>sourcePath(p)===file)) return;
   if (saved || document.isDirty === false) dirtyDocuments.delete(file); else dirtyDocuments.add(file);
-  dirtyGraph=G;gp.clearScenes(G);++epoch;
+  // Unsaved editor text never invalidates the saved design. The central save
+  // coordinator publishes a replacement graph after a successful disk write.
 }
 async function openScope(moduleName, parentParams, focusInst, originInst, instancePath, context) {
   try {
-    if (dirtyGraph === G) {
-      if (G.paths.some(p=>dirtyDocuments.has(sourcePath(p)))) {
-        vscode.window.showInformationMessage(t('源码有未保存修改，请保存并刷新工程后再操作', 'Save source changes and refresh the project before continuing'));return;
-      }
-      bdState.G=null;bdState.proj=null;if (!(await loadGraph())) return;dirtyGraph=null;
-    }
+    if (!currentScopeContext(context)) return;
     const graph=G, request=++epoch;
+    const sceneRequest=gp.beginSceneRequest(graph);
     if(historyGraph!==graph){historyGraph=graph;scopeHistory=[];}
     let pp=parentParams instanceof Map ? Object.fromEntries(parentParams) : parentParams || undefined;
     context=context||{rootModule:moduleName,rootParams:pp||{},instances:[],originInst:originInst||null,handle:graph.handle};
+    context={...context,projectKey:bdState.proj?.srcKey};
     const begin=Date.now();let record=null, resolvedOrigin=context.handle===graph.handle?context.originInst:null;
     const resolvedHistory=[];
     moduleName=context.rootModule;pp=context.rootParams;
     for(let level=0;level<=context.instances.length;++level) {
       instancePath=JSON.stringify([context.rootModule,...context.instances.slice(0,level)]);
       const options={busView:busViewEnabled,parentParams:pp,originInst:resolvedOrigin||null,isTop:moduleName===bdState.topResolved&&level===0,instancePath,
-        instanceContext:{rootModule:context.rootModule,rootParams:context.rootParams,instances:context.instances.slice(0,level)}};
-      record=await gp.renderScene(graph,moduleName,options);
+        instanceContext:{rootModule:context.rootModule,rootParams:context.rootParams,instances:context.instances.slice(0,level),
+          ...(context.analysisVersion ? {analysisVersion:context.analysisVersion} : {})}};
+      record=await gp.renderScene(graph,moduleName,options,sceneRequest);
       if(request!==epoch||G!==graph||!record)return;
       if(level===context.instances.length)break;
       resolvedHistory.push({module:moduleName,params:pp,originInst:resolvedOrigin,context:{...context,instances:context.instances.slice(0,level)}});
@@ -602,11 +667,17 @@ async function openScope(moduleName, parentParams, focusInst, originInst, instan
     }
     if(request!==epoch||G!==graph||!record)return;
     currentSceneRecord=record;scopeContext=context;scopeHistory=resolvedHistory;scopeModule=moduleName;scopeParentParams=pp||null;
+    bindSourceLocations(record);
     lastRender={type:'render',epoch:request,module:moduleName,busView:busViewEnabled,originInst:resolvedOrigin||null,scene:record.scene,focusInst:focusInst||null,trail:scopeHistory.map(h=>h.module)};
+    if (panel && lastSceneShownInPanel !== record.scene.sceneId) {
+      scenePendingPanelReveal = record.scene.sceneId;
+      focusWhenPanelRevealed = focusInst || null;
+    }
     if(panel)panel.title='BD: '+moduleName;
     pendingFocusInst=focusInst||null;sendRender();lastRender.focusInst=null;
     outCh.appendLine('[bd][scene] '+moduleName+': blocks='+record.scene.blocks.length+' nets='+record.scene.nets.length+' elapsed='+ (Date.now()-begin)+'ms cache='+JSON.stringify(gp.sceneStats(graph)));
   } catch(e) {
+    if (e.code === 'AIRTL_REQUEST_SUPERSEDED') return;
     outCh.appendLine('[bd][scene][error] '+e.message);
     if(panel)panel.webview.postMessage({type:'error',message:e.message});
     vscode.window.showErrorMessage(t('Block Design 打开失败：','Could not open Block Design: ')+e.message);
@@ -614,12 +685,21 @@ async function openScope(moduleName, parentParams, focusInst, originInst, instan
 }
 function currentMessage(msg, allowDirty = false) {
   return G && currentSceneRecord && lastRender && msg.sceneId === currentSceneRecord.scene.sceneId &&
-    currentSceneRecord.handle === G.handle && (allowDirty || (currentSceneRecord.graphEpoch === (G.sceneEpoch||0) && dirtyGraph !== G)) &&
+    currentSceneRecord.handle === G.handle && (allowDirty || currentSceneRecord.graphEpoch === (G.sceneEpoch||0)) &&
     currentSceneRecord.session === gp.native().__runtimeInfo().session && gp.native().__runtimeInfo().alive;
 }
 async function navigate(msg) {
-  if(!currentMessage(msg)) { vscode.window.showInformationMessage(t('图形已过期，请刷新后重试','The diagram is outdated. Refresh and try again'));return; }
-  const nav=currentSceneRecord.navigation[msg.objectId];if(!nav)return;
+  const notice=message=>{
+    outCh.appendLine('[bd][navigate] '+msg.action+' '+msg.objectId+': '+message);
+    if(panel)panel.webview.postMessage({type:'navigationStatus',sceneId:msg.sceneId,message});
+    vscode.window.showInformationMessage(message);
+  };
+  const nav=currentSceneRecord?.navigation[msg.objectId];
+  if (msg.action === 'open' && nav) msg = { ...msg,
+    action: nav.enterScope ? 'enterScope' : nav.definition ? 'definition' : 'instantiation' };
+  const sourceAction=msg.action==='definition'||msg.action==='instantiation';
+  if(!currentMessage(msg,sourceAction)) { notice(t('图形已过期，请刷新后重试','The diagram is outdated. Refresh and try again'));return; }
+  if(!nav) { notice(t('该图形对象没有源码定位信息，请刷新后重试','This diagram object has no source location. Refresh and try again'));return; }
   if(msg.action==='enterScope') {
     const target=nav.enterScope;
     if(target) {
@@ -628,22 +708,52 @@ async function navigate(msg) {
     }return;
   }
   const target=msg.action==='definition'?nav.definition:msg.action==='instantiation'?nav.instantiation:null;
-  if(!target) {vscode.window.showInformationMessage(msg.action==='instantiation'?t('没有可定位的例化位置','No instantiation location is available'):t('该处无可读源码','No readable source at this location'));return;}
+  if(!target) {notice(msg.action==='instantiation'?t('没有可定位的例化位置','No instantiation location is available'):t('该处无可读源码','No readable source at this location'));return;}
   const open=(vscode.workspace.textDocuments||[]).find(d=>d.uri&&sourcePath(d.uri.fsPath)===sourcePath(target.file));
-  if(open&&open.isDirty) {vscode.window.showInformationMessage(t('源码有未保存修改，请保存并刷新工程后再操作','Save source changes and refresh the project before continuing'));return;}
-  await gotoLocation(target.file,target.line);
+  const entry=sourceLocations.get(sourcePath(target.file)),anchor=entry&&entry.lines.get(target.line);
+  const precise=anchor&&anchor.valid&&!(open&&open.isDirty&&!entry.edited);
+  const line=precise?anchor.line:0;
+  outCh.appendLine('[bd][navigate] '+msg.action+' '+msg.objectId+' -> '+target.file+':'+line);
+  if(await gotoLocation(target.file,line)) {
+    if(!precise)notice(t('源码定位所在行已修改，已打开原文件；刷新原理图后可重新精确定位','The source location changed. Opened the original file; refresh the diagram to locate it precisely'));
+  }
 }
 const textRefinements=new Set();
+const recoveredTextSnapshots=new Set();
 async function refineText(msg) {
-  if(!currentMessage(msg))return;
+  if(!currentMessage(msg)||(lastRender&&lastRender.epoch!==epoch))return;
   if(textRefinements.has(msg.sceneId))return;
   textRefinements.add(msg.sceneId);
   try {
-  const graph=G,request=epoch,record=currentSceneRecord;
-  const next=await gp.refineScene(graph,record,msg.widths);
-  if(!next||G!==graph||epoch!==request||currentSceneRecord!==record)return;
-  currentSceneRecord=next;lastRender={...lastRender,scene:next.scene,preserveView:true};
-  if(panel)panel.webview.postMessage({type:'sceneTextPatch',patch:next.patch});
+    const graph=G,request=epoch,record=currentSceneRecord;
+    let next;
+    try {
+      next=await gp.refineScene(graph,record,msg.widths);
+    } catch(e) {
+      if(/snapshot expired/i.test(e&&e.message)) {
+        // Native scene snapshots have a smaller byte-bounded LRU than the JS
+        // scene cache. A cached UI scene can therefore outlive its native
+        // snapshot, especially after moving between large scopes. If this is
+        // still the displayed scene, evict the stale JS scenes and rebuild
+        // the current scope once. A late response for another scene is simply
+        // discarded.
+        if(G!==graph||epoch!==request||currentSceneRecord!==record||!currentMessage(msg)||(lastRender&&lastRender.epoch!==epoch))return;
+        if(recoveredTextSnapshots.has(msg.sceneId))throw e;
+        recoveredTextSnapshots.add(msg.sceneId);
+        if(recoveredTextSnapshots.size>128)recoveredTextSnapshots.clear();
+        const active=lastRender,context=scopeContext;
+        if(!context)throw e;
+        outCh.appendLine('[bd][scene] native text snapshot expired; rebuilding current scope '+active.module);
+        gp.clearScenes(graph);
+        await openScope(context.rootModule,context.rootParams,active.focusInst,context.originInst,undefined,context);
+        return;
+      }
+      if(/expired/i.test(e&&e.message)&&(G!==graph||epoch!==request||currentSceneRecord!==record||!currentMessage(msg)||(lastRender&&lastRender.epoch!==epoch)))return;
+      throw e;
+    }
+    if(!next||G!==graph||epoch!==request||currentSceneRecord!==record)return;
+    currentSceneRecord=next;lastRender={...lastRender,scene:next.scene,preserveView:true};
+    if(panel)panel.webview.postMessage({type:'sceneTextPatch',patch:next.patch});
   }finally{textRefinements.delete(msg.sceneId);}
 }
 
@@ -740,6 +850,8 @@ async function onMessage(msg) {
         break;
     }
   } catch (e) {
+    if (msg && msg.type === 'sceneTextMetrics' && /expired/i.test(e && e.message) &&
+        (!currentMessage(msg) || (lastRender && lastRender.epoch !== epoch))) return;
     // 同步异常也可见化（require 失败/空引用等）
     outCh.appendLine('[onMessage] 异常 (' + msg.type + '): ' + (e && e.stack || e));
     vscode.window.showErrorMessage(t('处理消息 ', 'Error handling message ') + msg.type + t(' 异常: ', ': ') + (e && e.message || e));
@@ -750,14 +862,19 @@ async function gotoLocation(file, line) {
   if (!file) { vscode.window.showInformationMessage(t('该处无可读源码', 'No readable source at this location')); return; }
   try {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-    const ed = await vscode.window.showTextDocument(doc);
+    const ed = await vscode.window.showTextDocument(doc, {preserveFocus:false,preview:false});
     if (line > 0) {
       const pos = new vscode.Position(line - 1, 0);
       ed.selection = new vscode.Selection(pos, pos);
       ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
     }
+    return true;
   } catch (e) {
-    vscode.window.showErrorMessage(t('打开文件失败: ', 'Could not open file: ') + e.message);
+    const message=t('打开文件失败: ', 'Could not open file: ') + file + ':' + line + ' (' + e.message + ')';
+    outCh.appendLine('[bd][navigate][error] '+message);
+    if(panel&&currentSceneRecord)panel.webview.postMessage({type:'navigationStatus',sceneId:currentSceneRecord.scene.sceneId,message});
+    vscode.window.showErrorMessage(message);
+    return false;
   }
 }
 
@@ -797,7 +914,14 @@ function exportToSim(ids, moduleName) {
   if (!lastRender || !lastRender.scene) { vscode.window.showInformationMessage(t('无当前作用域', 'No active scope')); return; }
   step('开始：选中 ' + ids.length + ' 块，模块=' + (moduleName || lastRender.module));
   // 1. 提取选中子图（原生 collectSelectedSubgraph——只读不改图）
-  const scope = gp.renderScope(G, scopeModule, { busView: busViewEnabled, parentParams: scopeParentParams }).scope;   // UI 版（prepareScopeForUI 输出）
+  const scopeOptions = { busView: busViewEnabled, parentParams: scopeParentParams };
+  if (scopeContext) scopeOptions.instanceContext = {
+    rootModule: scopeContext.rootModule,
+    rootParams: scopeContext.rootParams || {},
+    instances: scopeContext.instances || [],
+    ...(scopeContext.analysisVersion ? {analysisVersion:scopeContext.analysisVersion} : {}),
+  };
+  const scope = gp.renderScope(G, scopeModule, scopeOptions).scope;   // UI 版（prepareScopeForUI 输出）
   const sub = gp.native().collectSelectedSubgraph(scope, ids, moduleName || scope.module || '');
   if (!sub || !sub.blocks.length) { step('Failed: subgraph is empty'); vscode.window.showInformationMessage(t('失败：未提取到子图', 'Failed to extract the subgraph')); return; }
   step('子图提取 ok: blocks=' + sub.blocks.length + ' boundary=' + sub.boundary.length);
@@ -897,14 +1021,8 @@ async function applyRewire(msg) {
     const done = await vscode.workspace.applyEdit(wsEdit);   // Ctrl+Z 可撤销
     if (!done) throw new Error('WorkspaceEdit 被拒绝');
     if (!(await document.save())) throw new Error('源文件保存失败，未重新加载连线图');
-    gp.invalidateFile(G, def.file);                            // 定向失效（TASKS §2）
     outCh.appendLine(`[bd][apply] .${msg.port}(${edit.oldExpr}) -> (${msg.newSignal}) @ ${basename(def.file)}:${instLine}`);
-    const oldG = G;
-    G = gp.loadGraph(hdlFiles, { workspaceDir: vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] ? vscode.workspace.workspaceFolders[0].uri.fsPath : null });   // mtime 变化 → 只重析被改文件
-    if (oldG && oldG !== G) gp.freeGraph(oldG);                 // 换后端图先释放旧 handle
-    bdState.G = G;
-    await openScope(scopeModule, scopeParentParams, null, lastRender.originInst, lastRender.scene.instancePath, scopeContext);
-    await vscode.commands.executeCommand('vivadoProjectExplorer.refresh');
+    await vscode.commands.executeCommand('vivadoProjectExplorer.updateSaved', [def.file]);
   } catch (e) {
     outCh.appendLine('[bd][error] rewire: ' + e.message);
     if (panel) panel.webview.postMessage({ type: 'error', message: e.message });  // B8 error/ack
@@ -915,6 +1033,7 @@ async function applyRewire(msg) {
 function getHtml(webview, mediaDir) {
   const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   const scriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(mediaDir, 'main.js')));
+  const wireStyleUri = webview.asWebviewUri(vscode.Uri.file(path.join(mediaDir, 'wireStyle.js')));
   const protocolUri = webview.asWebviewUri(vscode.Uri.file(path.join(mediaDir, 'sceneProtocol.js')));
   const language = isChinese() ? 'zh-CN' : 'en';
   const translations = JSON.stringify(webviewTranslations()).replace(/</g, '\\u003c');
@@ -972,6 +1091,7 @@ function getHtml(webview, mediaDir) {
 </div>
 <script nonce="${nonce}">window.airtlText=${translations};</script>
 <script nonce="${nonce}" src="${protocolUri}"></script>
+<script nonce="${nonce}" src="${wireStyleUri}"></script>
 <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

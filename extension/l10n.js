@@ -15,6 +15,10 @@ function t(chinese, english) {
 }
 
 const WEBVIEW_EN = {
+  '跳转信号定义': 'Go to signal definition',
+  '跳转信号声明': 'Go to signal declaration',
+  '跳转信号使用位置': 'Go to signal usage',
+  '跳转驱动过程': 'Go to driving process',
   '返回': 'Back', '总线视图': 'Bus view',
   '总线视图：把 AXI / SV interface / SV struct 成员折成一根粗 pin + 一条粗线': 'Bus view: group AXI, SV interface, and SV struct members into a single pin and wire',
   '导出所选文件名': 'Export selected file names',

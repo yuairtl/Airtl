@@ -29,7 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const airtl = require(path.join(__dirname, '..', 'Airtl', 'index.js'));
 
-const CONFIG_DIR = 'C:/userconfig/rtlassistant';
+const { CONFIG_DIR } = require('./globalConfig');
 const LICENSE_PATH = path.join(CONFIG_DIR, 'license.key');
 
 // 读文件并灌给原生。返回 { ok, loaded, reason, machineId, path, source }
@@ -102,4 +102,15 @@ function machineId() {
   try { return airtl.licenseMachineId(); } catch (e) { return ''; }
 }
 
-module.exports = { load, state, machineId, LICENSE_PATH };
+async function loadAsync(){
+  const out={ok:false,loaded:false,reason:'',machineId:'',path:LICENSE_PATH,source:''};
+  try {
+    out.machineId=await airtl.licenseMachineIdAsync();
+    let blob='';try{blob=await fs.promises.readFile(LICENSE_PATH,'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
+    out.source=blob.trim()?'file':'default';
+    out.loaded=out.source==='file'?!!(await airtl.licenseSetLicenseAsync(blob)):!!(await airtl.licenseUseDefaultAsync());
+    out.ok=out.loaded;if(!out.ok)out.reason='授权装载失败';
+  }catch(error){out.reason=error.message;}
+  return out;
+}
+module.exports = { load, loadAsync, state, machineId, LICENSE_PATH };

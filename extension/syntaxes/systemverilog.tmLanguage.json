@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Airtl SystemVerilog",
+  "scopeName": "source.systemverilog.airtl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#directives" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#keywords" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.systemverilog", "match": "//.*$" },
+        { "name": "comment.block.systemverilog", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.systemverilog",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.systemverilog", "match": "\\\\." }]
+    },
+    "directives": {
+      "patterns": [
+        { "name": "keyword.control.directive.systemverilog", "match": "`[A-Za-z_$][A-Za-z0-9_$]*" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.systemverilog", "match": "(?i)(?<![A-Za-z0-9_$])(?:\\d[\\d_]*|'[s]?[bodh][0-9a-f_xz?]+|'[01xz])" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "storage.type.systemverilog", "match": "\\b(?:bit|logic|reg|wire|tri|integer|int|shortint|longint|byte|time|real|realtime|shortreal|signed|unsigned|string|event|void|chandle|type|struct|union|enum|class|interface|program|clocking|virtual|var)\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.systemverilog", "match": "\\b(?:module|endmodule|package|endpackage|import|export|parameter|localparam|input|output|inout|ref|const|assign|always|always_comb|always_ff|always_latch|initial|final|begin|end|fork|join|join_any|join_none|if|else|case|casez|casex|endcase|for|foreach|while|repeat|forever|do|return|break|continue|generate|endgenerate|function|endfunction|task|endtask|property|endproperty|sequence|endsequence|assert|assume|cover|checker|endchecker|modport|specify|endspecify|posedge|negedge|or|and|not|posedge|negedge|disable|iff|default|this|super|new|extends|implements|extern|automatic|static|protected|local|pure|rand|randc|constraint|solve|before|inside|dist|matches|unique|priority|typedef|bind|defparam|primitive|endprimitive|table|endtable|macro|logic|integer)\\b" }
+      ]
+    }
+  }
+}

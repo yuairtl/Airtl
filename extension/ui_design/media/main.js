@@ -18,7 +18,7 @@ const ctx = cv.getContext('2d');
 
 // Geometry and display labels are delivered by the native Scene contract.
 const C = {
-  hl: '#1a6fe8', dim: '#9aa9c0',
+  hl: '#1a6fe8', semanticHl: '#9a4fc0', dim: '#9aa9c0',
   bg: '#ffffff',
   boxFill: '#e8f2fb', boxLine: '#4a90c4', boxSel: '#2fbf71',
   regFill: '#e6f4ea', regLine: '#3aa76d',   // reg 缓冲块（区别于例化块）
@@ -37,14 +37,39 @@ let connectFrom = null, mouseW = null;
 let lastClick = { key: null, t: 0, x: 0, y: 0 };
 let focusNetId = null;   // 点击接口高亮所属网络
 let focusName = '';      // 高亮网络的名称（状态栏用）
+let focusSignalRef = ''; // 同一聚合网络中各端口可以连接不同的位选
 let focusBlockKey = null;   // BD 树单击定位：聚焦的块 key（UI 内位置高亮 + 居中）
 let hoverNetId = null;   // 悬停连线 → 显示该网名称（网名默认隐藏）
+let hoverSignalName = ''; // 原生层交付的端口位选优先于聚合网名
 let hoverConstKey = null;// 悬停 const 块 → 显示该例化各常量引脚的例化语句（内容由 UI 交付层给）
 let hoverBusPinKey = null; // 悬停总线粗端口 → 罗列成员信号及是否连通
 let hoverBusLines = null;  // 上面的成员清单（预处理层给好的文本行）
+let hoverStreamKey = null; // 悬停 STREAM 块 → 显示变换摘要
+let hoverExprKey = null; // 悬停表达式块 → 显示 Slang 操作数转换事实
 let hoverScr = null;     // 悬停时的鼠标屏幕坐标（tooltip 定位）
 let view = { scale: 1, tx: 0, ty: 0 };
+let viewFitPending = false, pendingFocusInst = null;
+let lastFocusedSceneId = null;
 let dpr = 1;
+
+// At overview zoom, world-space strokes and labels can become sub-pixel and
+// antialias into faint duplicate-looking outlines. Keep schematic geometry
+// legible in screen space and defer text until it has a readable pixel height.
+const MIN_SCREEN_STROKE_PX = 0.55;
+const MIN_SCREEN_HIGHLIGHT_PX = 1.3;
+const MIN_SCREEN_TEXT_PX = 6;
+function worldStrokeWidth(width, highlighted = false, minScreenPx = null) {
+  const targetPx = minScreenPx ?? (highlighted ? MIN_SCREEN_HIGHLIGHT_PX : MIN_SCREEN_STROKE_PX);
+  return Math.max(width, targetPx / Math.max(view.scale, 0.001));
+}
+function worldDashPattern(pattern, minSegmentScreenPx = 1) {
+  if (!pattern || !pattern.length) return [];
+  const minWorld = minSegmentScreenPx / Math.max(view.scale, 0.001);
+  return pattern.map(segment => Math.max(segment, minWorld));
+}
+function worldTextVisible(fontPx = 10) {
+  return fontPx * view.scale >= MIN_SCREEN_TEXT_PX;
+}
 
 function api() {
   if (!api._v) { try { const bridge = acquireVsCodeApi(); api._v = { postMessage: message => bridge.postMessage(scene ? { sceneId: scene.sceneId, ...message } : message) }; } catch (e) { } }
@@ -56,7 +81,10 @@ window.addEventListener('message', e => {
   const m = e.data;
   if (!m || !m.type) return;
   try {
-    if (m.type === 'render') {
+    if (m.type === 'clear') {
+      scene=null;window.__bdscene=null;checked=new Set();
+      ctx.clearRect(0,0,cv.width,cv.height);statusEl.textContent=m.message||'';
+    } else if (m.type === 'render') {
       const preserve = !!(m.preserveView && scene && scene.module === m.scene.module && scene.instancePath === m.scene.instancePath);
       acceptScene(m, preserve);
       checked = new Set(m.selected || []);
@@ -64,6 +92,14 @@ window.addEventListener('message', e => {
       trail = m.trail || [];
       updateChrome();
       if (m.focusInst) focusBlock(m.focusInst); else if (!preserve) fitToView();
+      draw();
+      updateStatus();
+    } else if (m.type === 'viewRevealed') {
+      if (!scene || m.sceneId !== scene.sceneId) return;
+      viewFitPending = true;
+      pendingFocusInst = m.focusInst || null;
+      resize();
+      restorePendingView();
       draw();
       updateStatus();
     } else if (m.type === 'sceneTextPatch') {
@@ -74,6 +110,8 @@ window.addEventListener('message', e => {
       if (m.inst) focusBlock({ inst: m.inst, type: m.blockType });
     } else if (m.type === 'error') {
       statusEl.textContent = tr('错误: ') + m.message;
+    } else if (m.type === 'navigationStatus') {
+      if (scene && m.sceneId === scene.sceneId) statusEl.textContent = m.message;
     }
   } catch (err) {
     statusEl.textContent = tr('渲染异常: ') + err.message;
@@ -104,8 +142,8 @@ function acceptScene(m, preserve = false) {
   };
   pinMaps = new Map(raw.blocks.map(b => [b.key, new Map(b.pins.map(p => [p.name, p]))]));
   if (!preserve) {
-    focusNetId = null; focusName = ''; focusBlockKey = null;
-    hoverNetId = null; hoverConstKey = null; hoverBusPinKey = null; hoverBusLines = null;
+    focusNetId = null; focusName = ''; focusSignalRef = ''; focusBlockKey = null;
+    hoverNetId = null; hoverSignalName = ''; hoverConstKey = null; hoverBusPinKey = null; hoverBusLines = null; hoverStreamKey = null; hoverExprKey = null;
     activeHighlight = { nets: new Set(), pins: new Set(), pads: new Set() };
   }
   visibleCache = null;
@@ -171,9 +209,25 @@ function navigate(objectId, action) { const a = api(); if (a && scene) a.postMes
 function fitToView() {
   resize();
   if (!scene) return;
+  // A background webview can receive the new project scene while VS Code has
+  // collapsed its canvas to 0×0. Defer fitting until the tab becomes visible;
+  // otherwise the 0.02 minimum scale is kept after the canvas grows again.
+  if (cv.clientWidth <= 0 || cv.clientHeight <= 0) {
+    viewFitPending = true;
+    pendingFocusInst = null;
+    return;
+  }
+  viewFitPending = false;
+  pendingFocusInst = null;
   const sx = cv.clientWidth / Math.max(scene.width, 1);
   const sy = cv.clientHeight / Math.max(scene.height, 1);
-  view.scale = Math.max(0.02, Math.min(sx, sy) * 0.92);
+  const fitScale = Math.min(sx, sy) * 0.92;
+  // A port-only scope with hundreds of boundary pads has no useful overview:
+  // fitting its full height makes every label disappear. Start at a readable
+  // scale and let the user pan through the long list instead.
+  const longBoundaryList = scene.pads && scene.pads.length >= 128
+    && (!scene.blocks || scene.blocks.length === 0);
+  view.scale = Math.max(0.02, longBoundaryList ? Math.max(fitScale, 0.8) : fitScale);
   view.tx = (cv.clientWidth - scene.width * view.scale) / 2;
   view.ty = (cv.clientHeight - scene.height * view.scale) / 2;
 }
@@ -183,7 +237,36 @@ function resize() {
   cv.width = cv.clientWidth * dpr;
   cv.height = cv.clientHeight * dpr;
 }
-window.addEventListener('resize', () => { resize(); draw(); });
+function restorePendingView() {
+  if (!viewFitPending || !scene || cv.clientWidth <= 0 || cv.clientHeight <= 0) return false;
+  const focus = pendingFocusInst;
+  pendingFocusInst = null;
+  fitToView();
+  if (focus) focusBlock(focus);
+  return true;
+}
+function onViewportResize() {
+  resize();
+  restorePendingView();
+  draw();
+}
+window.addEventListener('resize', onViewportResize);
+window.addEventListener('focus', () => {
+  resize();
+  if (!scene) return;
+  if (viewFitPending) restorePendingView();
+  else if (lastFocusedSceneId !== scene.sceneId) {
+    const focus = pendingFocusInst;
+    fitToView();
+    if (focus) focusBlock(focus);
+  }
+  lastFocusedSceneId = scene.sceneId;
+  draw();
+});
+if (typeof ResizeObserver === 'function') {
+  const canvasResizeObserver = new ResizeObserver(onViewportResize);
+  canvasResizeObserver.observe(cv);
+}
 
 // ---------- 绘制 ----------
 function paint() {
@@ -201,20 +284,22 @@ function paint() {
   // nets：正交折线（focusNetId 高亮该网及全部同名网，其余变淡）
   ctx.font = '9px Consolas';
   const _focus = focusNetId;
-  const hlPins = activeHighlight.pins, hlPads = activeHighlight.pads;
+  const hlPins = activeHighlight.pins, semanticPins = activeHighlight.semanticPins || new Set(), hlPads = activeHighlight.pads;
   const visible = visibleObjects(vx0, vy0, vx1, vy1);
   for (const netIndex of visible.nets) {
     const n = scene.nets[netIndex], netHighlighted = activeHighlight.nets.has(n.id);
-    let strokeStyle, dash, lw;
-    if (n.style === 'warn') { strokeStyle = C.warn; dash = [6, 3]; lw = 1.2; }
-    else if (n.style === 'bus') { strokeStyle = C.net; dash = []; lw = 3; }
-    else if (n.style === 'bitsel') { strokeStyle = C.netBitsel; dash = [4, 3]; lw = 1.2; }
-    // 常量源 / 常量+wire 组合赋值（const 模块在块外）：用户要求用虚线连入
-    else if (n.style === 'const') { strokeStyle = C.warn; dash = [4, 3]; lw = 1.2; }
-    else { strokeStyle = C.net; dash = []; lw = 1.2; }
-    if (netHighlighted) { strokeStyle = C.hl; lw = 4.5; dash = []; }
+    const line = window.airtlWireStyle.net(n);
+    const colorRole = line.colorRole;
+    let strokeStyle = colorRole === 'warning' || colorRole === 'constant' ? C.warn
+      : colorRole === 'bitsel' ? C.netBitsel : C.net;
+    const dash = line.dash;
+    if (netHighlighted) {
+      strokeStyle = activeHighlight.semanticNets && activeHighlight.semanticNets.has(n.id) ? C.semanticHl : C.hl;
+    }
     else if (focusNetId) { strokeStyle = C.dim; }
-    ctx.strokeStyle = strokeStyle; ctx.setLineDash(dash); ctx.lineWidth = lw;
+    ctx.strokeStyle = strokeStyle; ctx.setLineDash(worldDashPattern(dash));
+    ctx.lineWidth = worldStrokeWidth(netHighlighted ? 4.5 : line.width, netHighlighted,
+      line.weight === 'bus' && !netHighlighted ? 0.85 : null);
     // 分叉点：只画后端标注的真 T 分叉（枝落点在干线跨度内部）；
     // 干线端点 / L 拐角不再画方块（用户反馈：简单转折不该有点）
     for (const j of (n.junctions || [])) {
@@ -231,10 +316,28 @@ function paint() {
       for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
       ctx.stroke();
     }
+    if (Array.isArray(n.relationPolys)) {
+      for (let i = 0; i < n.relationPolys.length; i++) {
+        const poly = n.relationPolys[i];
+        const relation = window.airtlWireStyle.relation(n, i);
+        ctx.strokeStyle = netHighlighted ? strokeStyle
+          : focusNetId ? C.dim : relation.kind === 'conversion' ? C.warn
+            : relation.kind === 'bitsel' ? C.netBitsel : C.net;
+        ctx.setLineDash(worldDashPattern(relation.pattern === 'dashed' ? [4, 3] : []));
+        ctx.lineWidth = worldStrokeWidth(netHighlighted ? 4.5 : 1.2, netHighlighted);
+        const bounds = n.relationPolyBounds && n.relationPolyBounds[i];
+        if (bounds && (bounds[2] < vx0 || bounds[0] > vx1 || bounds[3] < vy0 || bounds[1] > vy1)) continue;
+        if (!poly || poly.length < 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(poly[0][0], poly[0][1]);
+        for (let j = 1; j < poly.length; j++) ctx.lineTo(poly[j][0], poly[j][1]);
+        ctx.stroke();
+      }
+    }
     ctx.setLineDash([]);
     // 网名标签：默认隐藏；点击高亮（_hl）的网在锚点显示。悬停的网名在 draw() 末尾
     // 以跟随鼠标的 tooltip 呈现（屏幕坐标）。
-    if (n.name && view.scale > 0.15 && netHighlighted) {
+    if (n.name && worldTextVisible(9) && netHighlighted) {
       ctx.fillStyle = C.hl;
       ctx.fillText(n.displayLabel, n.lx + 2, n.ly - 2);
     }
@@ -248,7 +351,7 @@ function paint() {
     if (s.y < vy0 - 10 || s.y > vy1 + 10) continue;
     const dx = s.side === 'L' ? 18 : -18;
     ctx.strokeStyle = C.net;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = worldStrokeWidth(1.2);
     ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
@@ -269,7 +372,7 @@ function paint() {
     ctx.lineTo(x, y + 4);
     ctx.closePath();
     if (filled) ctx.fill();
-    else { ctx.lineWidth = 1; ctx.stroke(); }
+    else { ctx.lineWidth = worldStrokeWidth(1); ctx.stroke(); }
   };
   for (const padIndex of visible.pads) {
     const p = scene.pads[padIndex];
@@ -294,19 +397,21 @@ function paint() {
       ctx.font = 'bold 10px Consolas';
       ctx.fillText('?', p.x - 12, p.y + 3.5);
     }
-    ctx.fillStyle = padHl ? C.hl : C.bndText;
-    ctx.font = (p.bus ? 'bold ' : '') + '10px Consolas';
-    const label = p.displayLabel;
-    // pad 标签 = 顶层端口名（用户裁定：只显示输入/输出端口名）——恒显示，含对齐直连的 pad
-    if (p.side === 'L') {
-      const w = p.labelWidth;
-      ctx.fillText(label, p.x - 8 - w, p.y + 3.5);   // 标签在 pad 左侧标签带内
-    } else {
-      ctx.fillText(label, p.x + 8, p.y + 3.5);
+    if (worldTextVisible(10)) {
+      ctx.fillStyle = padHl ? C.hl : C.bndText;
+      ctx.font = (p.bus ? 'bold ' : '') + '10px Consolas';
+      const label = p.displayLabel;
+      // 完整总览时标签可能低于可读像素高度；放大后再显示，避免密集端口变成灰影。
+      if (p.side === 'L') {
+        const w = p.labelWidth;
+        ctx.fillText(label, p.x - 8 - w, p.y + 3.5);
+      } else {
+        ctx.fillText(label, p.x + 8, p.y + 3.5);
+      }
     }
     // 常量驱动的边界端口：画「接常数」标签（与块 constPins 同款），BUG2 修复——
     // 一眼看清常量驱动的输出端口是「接常数」而非漏画线。
-    if (p.constValue) {
+    if (p.constValue && worldTextVisible(8)) {
       const val = String(p.constValue);
       ctx.font = '8px Consolas';
       const tw = measureTextCached(val).width;
@@ -342,31 +447,33 @@ function paint() {
     ctx.fillStyle = b.isReg ? C.regFill : C.boxFill;
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeStyle = isChecked ? C.boxSel : (b.isReg ? C.regLine : C.boxLine);
-    ctx.lineWidth = isChecked ? 2 : 1.2;
+    ctx.lineWidth = worldStrokeWidth(isChecked ? 2 : 1.2, isChecked);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     // 标题栏
-    ctx.fillStyle = C.title;
-    ctx.font = 'bold 11px Consolas';
-    ctx.fillText(b.title, r.x + 8, r.y + 15);
+    if (worldTextVisible(11)) {
+      ctx.fillStyle = C.title;
+      ctx.font = 'bold 11px Consolas';
+      ctx.fillText(b.title, r.x + 8, r.y + 15);
+    }
     // 底部：被例化的模块名（type，灰色小字，居中；与顶部例化名区分）
-    if (b.sub) {
+    if (b.sub && worldTextVisible(9)) {
       ctx.fillStyle = C.sub;
       ctx.font = '9px Consolas';
       const tw = b.subWidth;
       ctx.fillText(b.sub, r.x + (r.w - tw) / 2, r.y + r.h - 6);
     }
-    if (b.expandable) {
+    if (b.expandable && worldTextVisible(9)) {
       ctx.fillStyle = C.boxLine;
       ctx.font = '9px Consolas';
       ctx.fillText('»', r.x + r.w - 12, r.y + 15);
     }
-    if (b.isReg) {
+    if (b.isReg && worldTextVisible(9)) {
       ctx.fillStyle = C.regLine;
       ctx.font = '9px Consolas';
       ctx.fillText('R', r.x + r.w - 12, r.y + 15);
     }
     ctx.strokeStyle = C.boxLine;
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = worldStrokeWidth(0.8);
     ctx.beginPath();
     ctx.moveTo(r.x, r.y + scene.geometry.pinTop - 4);
     ctx.lineTo(r.x + r.w, r.y + scene.geometry.pinTop - 4);
@@ -377,24 +484,24 @@ function paint() {
       const p = b.pins[pinIndex];
       // 高亮连接到高亮网络的pin
       const pinHl = hlPins.has(b.key + '\u0000' + p.name);
-      ctx.fillStyle = pinHl ? C.hl : C.pin;
+      ctx.fillStyle = pinHl ? (semanticPins.has(b.key + '\u0000' + p.name) ? C.semanticHl : C.hl) : C.pin;
       if (p.bus) ctx.fillRect(p.x - 3.5, p.y - scene.geometry.busPinHeight / 2, 7, scene.geometry.busPinHeight);
       else ctx.fillRect(p.x - 3.5, p.y - 3.5, 7, 7);
       // 方向箭头（没分清修复）：输入 pin 空心 ▷（块外左侧，指向块内）；
       // 输出 pin 实心 ▶（块外右侧，指向块外）——与边界 pad 的空心/实心语义一致
       if (view.scale > 0.25) {
-        ctx.strokeStyle = pinHl ? C.hl : C.pin;
+        ctx.strokeStyle = pinHl ? (semanticPins.has(b.key + '\u0000' + p.name) ? C.semanticHl : C.hl) : C.pin;
         if (p.side === 'L') drawDirArrow(p.x - 12, p.y, false);
         else if (p.dir === 'out') drawDirArrow(p.x + 4, p.y, true);
         else if (p.dir === 'inout') { drawDirArrow(p.x - 8, p.y, false); drawDirArrow(p.x + 6, p.y, true); }
-        else {   // unknown：灰色 ? 标记——方向未定不猜，绝不画成输出样式（BUG 修复：原 unknown 与输出同为实心▶）
+        else if (worldTextVisible(10)) {   // unknown：仅在标记有可读尺寸时显示 ?
           ctx.fillStyle = '#9aa8b5';
           ctx.font = 'bold 10px Consolas';
           ctx.fillText('?', p.x + 5, p.y + 3.5);
         }
       }
-      if (view.scale > 0.05) {
-        ctx.fillStyle = pinHl ? C.hl : (p.dir === 'unknown' ? '#8494a4' : C.pinText);
+      if (worldTextVisible(b.pinFontPx || 10)) {
+        ctx.fillStyle = pinHl ? (semanticPins.has(b.key + '\u0000' + p.name) ? C.semanticHl : C.hl) : (p.dir === 'unknown' ? '#8494a4' : C.pinText);
         ctx.font = (p.bus ? 'bold ' : '') + (b.pinFontPx || 10) + 'px Consolas';
         const label = p.displayLabel;
         if (p.side === 'L') ctx.fillText(label, p.x + 8, p.y + 3.5);
@@ -409,7 +516,7 @@ function paint() {
       //   ② 多常量 / 「常量+信号」混合 → 由预处理层合成块外 const 块 + style='const' 虚线网连入，
       //      块的画法就是下面通用的块绘制，故此处不再需要专门的"端口打值"分支。
       //   边界端口的常量值（boundary[].constValue）同样走 pad 标注。
-      if (p.constValue && view.scale > 0.2) {
+      if (p.constValue && worldTextVisible(8)) {
         const val = String(p.constValue);
         ctx.font = '8px Consolas';
         const tw = measureTextCached(val).width;
@@ -435,7 +542,7 @@ function paint() {
       }
     }
     // 端口折叠提示（§11 未做5 MAX_BLOCK_PINS）：单块端口超限时底部显示 "+N more"
-    if (b.morePins > 0) {
+    if (b.morePins > 0 && worldTextVisible(9)) {
       ctx.fillStyle = C.pinText;
       ctx.font = '9px Consolas';
       ctx.fillText('+' + b.morePins + ' more', r.x + 8, r.y + r.h - 5);
@@ -443,7 +550,7 @@ function paint() {
     // BD 树单击定位：聚焦块画一圈高亮描边（在块外，不被 pin/标题覆盖）
     if (b.key === focusBlockKey) {
       ctx.strokeStyle = C.hl;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = worldStrokeWidth(3, true);
       ctx.strokeRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
     }
   }
@@ -466,9 +573,8 @@ function paint() {
   }
 
   // 悬停网名 tooltip：跟随鼠标（屏幕坐标），白底描边保证压线可读
-  if (hoverNetId && hoverScr && scene) {
-    const meta = scene.netMeta.get(hoverNetId);
-    const nm = meta && meta.name;
+  if (hoverSignalName && hoverScr && scene) {
+    const nm = hoverSignalName;
     if (nm) {
       const t = trunc(nm, 44);
       ctx.font = '11px Consolas';
@@ -598,7 +704,7 @@ function wireAt(wx, wy) {
   if (!scene) return null;
   const th=Math.max(4,6/view.scale);let best=null,bestD=th*th;
   for(const e of candidates(wx-th,wy-th,wx+th,wy+th,3)) {
-    const n=scene.nets[e[1]],poly=n.polys[e[2]],p=poly[e[3]],q=poly[e[3]+1];
+    const n=scene.nets[e[1]],poly=e[2]<n.polys.length?n.polys[e[2]]:n.relationPolys[e[2]-n.polys.length],p=poly[e[3]],q=poly[e[3]+1];
     const d=distToSegSq(wx,wy,p[0],p[1],q[0],q[1]);if(d<=bestD){bestD=d;best=n.id;}
   }
   return best;
@@ -616,7 +722,8 @@ function busPinSummary(p) {
   const ms = p.busMembers || [];
   const head = (p.label || p.name) + '  [' + (p.busType || 'bus') + ']  '
     + ms.length + tr(' 成员 / ') + (p.busConnected != null ? p.busConnected : ms.length) + tr(' 连通');
-  const list = ms.map(m => (m.connected ? '✓' : '✗') + (m.logical || m.port)).join('  ');
+  const list = ms.map(m => (m.constValue ? '=' : m.connected ? '✓' : '✗')
+    + (m.logical || m.port) + (m.constValue ? '(' + m.constValue + ')' : '')).join('  ');
   return head + (list ? '：' + list : '');
 }
 // 总线粗端口悬停时鼠标旁的浮层（与悬停连线同一套 tooltip 机制）。
@@ -624,23 +731,72 @@ function busPinTip(p) {
   const ms = p.busMembers || [];
   const lines = [(p.label || p.name) + '  [' + (p.busType || 'bus') + ']'];
   for (const m of ms) {
-    lines.push((m.connected ? '✓ ' : '✗ ') + (m.logical || m.port)
+    lines.push((m.constValue ? '= ' : m.connected ? '✓ ' : '✗ ') + (m.logical || m.port)
       + (m.width && m.width > 1 ? ' [' + m.width + ']' : '')
-      + (m.connected ? '' : tr('（无对端）')));
+      + (m.constValue ? ' = ' + m.constValue : m.connected ? '' : tr('（无对端）')));
   }
   return lines;
 }
 
+function streamSummary(block) {
+  if (!block || block.type !== 'STREAM') return '';
+  if (block.dependencyStatus === 'partial')
+    return `STREAM partial: ${block.streamPartialReason || 'mapping incomplete'}; known dependencies retained`;
+  if (block.streamTransform === 'reverseChunks') {
+    const tail = block.streamTailBits ? `; MSB tail ${block.streamTailBits} bits` : '';
+    return `STREAM reverse chunks: slice ${block.streamSliceSize} bits, ${block.streamChunkCount} chunks${tail}; bit order within chunks preserved`;
+  }
+  return `STREAM identity order: ${block.streamBitWidth} bits`;
+}
+
+function streamPinMappingSummary(block, pin) {
+  const mapping = window.airtlSceneProtocol.describeStreamOperandMapping(block, pin, 6);
+  if (!mapping) return '';
+  const ranges = mapping.ranges.map(range => {
+    const source = range.sourceStart + range.width - 1;
+    const target = range.targetStart + range.width - 1;
+    return mapping.role === 'targetFromValue'
+      ? `value [${target}:${range.targetStart}] → target [${source}:${range.sourceStart}]`
+      : `operand [${source}:${range.sourceStart}] → result [${target}:${range.targetStart}]`;
+  });
+  if (mapping.truncated) ranges.push(`… ${mapping.rangeCount - mapping.ranges.length} more ranges`);
+  return ranges.join('; ');
+}
+
+function expressionConversionSummary(block) {
+  const conversions = block && block.operandConversions;
+  const summaries = Array.isArray(conversions) ? conversions.map(item => {
+    const subject = item.signalRef || item.sourceKind || 'expression';
+    const widths = item.sourceWidth && item.destinationWidth
+      ? ` ${item.sourceWidth}→${item.destinationWidth} bit` : '';
+    const signed = typeof item.sourceSigned === 'boolean' && typeof item.destinationSigned === 'boolean'
+      ? ` signed ${item.sourceSigned}→${item.destinationSigned}` : '';
+    const states = typeof item.sourceFourState === 'boolean' && typeof item.destinationFourState === 'boolean'
+      ? ` fourState ${item.sourceFourState}→${item.destinationFourState}` : '';
+    return `${subject}${widths} (${item.operation}${signed}${states})`;
+  }) : [];
+  if (block && block.resizeMode && block.resizeInputWidth && block.resizeOutputWidth) {
+    let summary = `function output ${block.resizeInputWidth}→${block.resizeOutputWidth} bit (${block.resizeMode})`;
+    if (block.resizeDroppedInputWidth) summary += `; ${block.resizeDroppedInputWidth} high input bit(s) dropped`;
+    summaries.push(summary);
+  }
+  return summaries.length ? 'Slang conversions: ' + summaries.join('; ') : '';
+}
+
 // 高亮焦点网络（含全部同名网）。再次点击同一网络（id 相同）→ 取消高亮。
 function setFocusNet(nid, sigName) {
-  focusNetId = (focusNetId === nid ? null : nid);
+  focusNetId = (focusNetId === nid && focusSignalRef === sigName ? null : nid);
+  focusSignalRef = focusNetId ? sigName : '';
   focusName = focusNetId ? (tr('高亮网络: ') + sigName) : '';
   const meta = focusNetId && scene.netMeta.get(focusNetId);
   const group = meta && scene.connectivity.groups[meta.groupId];
-  activeHighlight = { nets:new Set(group ? group.nets : []), pins:new Set(group ? group.pins : []), pads:new Set(group ? group.pads : []) };
+  const physical = { nets:new Set(group ? group.nets : []), pins:new Set(group ? group.pins : []), pads:new Set(group ? group.pads : []) };
+  activeHighlight = window.airtlSceneProtocol.expandStreamDataflowHighlight(scene, physical);
   window.__bdhighlight = activeHighlight;
   draw();
-  statusEl.textContent = focusName || tr('已取消高亮');
+  statusEl.textContent = focusNetId
+    ? focusName + (activeHighlight.semanticNets.size ? ' | STREAM dataflow highlighted in purple; nets remain distinct' : '')
+    : tr('已取消高亮');
 }
 
 // BD 树单击定位：把指定实例块居中并高亮（不改变勾选/导出状态）。
@@ -656,6 +812,13 @@ function focusBlock(f) {
     else if (cand.length > 1) b = cand.find(bl => (bl.inst || '').startsWith(inst)) || cand[0];
   }
   if (!b) { statusEl.textContent = tr('定位失败：当前视图无实例块 ') + (inst || ''); return; }
+  if (cv.clientWidth <= 0 || cv.clientHeight <= 0) {
+    viewFitPending = true;
+    pendingFocusInst = f;
+    return;
+  }
+  viewFitPending = false;
+  pendingFocusInst = null;
   focusBlockKey = b.key;
   const r = b.r;
   const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
@@ -759,13 +922,10 @@ cv.addEventListener('mousedown', e => {
       // 常量源伪块：没有源码也没有子模块，提示说明即可（不打开空文件）
       const a = api();
       if (a) a.postMessage({ type: 'notice', message: '"' + b.inst + '" ' + tr('是常量源（const），没有源码定义，也没有内部模块。') });
-    } else if (b.expandable) {
-      const a = api();
-      // 带「该子模块在当前作用域里被例化的位置」，供后端记录 originInst（顶层/跳例化用）
-      navigate(b.key, 'enterScope');
     } else {
-      const a = api();
-      navigate(b.key, 'definition');
+      // Native navigation decides: enter a readable module, open its definition,
+      // or locate the instantiation of a primitive / unavailable black box.
+      navigate(b.key, 'open');
     }
     lastClick = { key: null, t: 0, x: 0, y: 0 };
   } else {
@@ -803,33 +963,41 @@ function pointerMove(e) {
     const w = toWorld(e.offsetX, e.offsetY);
     const wid = wireAt(w.x, w.y);
     const hb = blockAt(w.x, w.y);
-    const ckey = (hb && hb.isConst && hb.tip) ? hb.key : null;
+    const ckey = (hb && hb.tip) ? hb.key : null;
     const bp = pinAt(w.x, w.y);
     const bpin = (bp && bp.pin && bp.pin.bus && bp.pin.busMembers && bp.pin.busMembers.length) ? bp.pin : null;
     const bkey = bpin ? bp.blockKey + '\u0000' + bp.port : null;
+    const skey = hb && hb.type === 'STREAM' ? hb.key : null;
+    const ekey = hb && ((Array.isArray(hb.operandConversions) && hb.operandConversions.length) || hb.resizeMode) ? hb.key : null;
+    const meta = wid ? scene.netMeta.get(wid) : null;
+    const signalName = (bp && !bpin && bp.pin.signalRef) || (meta && (meta.displayName || meta.name)) || '';
     hoverScr = { x: e.offsetX, y: e.offsetY };
-    if (wid !== hoverNetId || ckey !== hoverConstKey || bkey !== hoverBusPinKey) {
+    if (wid !== hoverNetId || signalName !== hoverSignalName || ckey !== hoverConstKey || bkey !== hoverBusPinKey || skey !== hoverStreamKey || ekey !== hoverExprKey) {
       hoverNetId = wid;
+      hoverSignalName = signalName;
       hoverConstKey = ckey;
       hoverBusPinKey = bkey;
+      hoverStreamKey = skey;
+      hoverExprKey = ekey;
       hoverBusLines = bpin ? busPinTip(bpin) : null;
-      cv.style.cursor = (wid || ckey || bkey) ? 'pointer' : 'grab';
-      const meta = wid ? scene.netMeta.get(wid) : null;
+      cv.style.cursor = (signalName || ckey || bkey) ? 'pointer' : 'grab';
       statusEl.textContent = [focusName,
-        meta && meta.name ? tr('悬停: ') + meta.name : '',
+        signalName ? tr('悬停: ') + signalName : '',
         ckey ? tr('常量 ') + (hb.inst || '') : '',
         bpin ? busPinSummary(bpin) : '',
+        skey ? [streamSummary(hb), streamPinMappingSummary(hb, bp && bp.pin), 'click a data pin to trace semantic dataflow (NETs stay separate)'].filter(Boolean).join('; ') : '',
+        ekey ? expressionConversionSummary(hb) : '',
       ].filter(Boolean).join('  |  ') || tr('就绪');
       draw();
-    } else if (wid || ckey || bkey) {
+    } else if (signalName || ckey || bkey) {
       draw();   // tooltip 跟随鼠标移动
     }
   }
 }
 cv.addEventListener('mouseleave', () => {
   pointerEvent = null;
-  if (hoverNetId || hoverConstKey || hoverBusPinKey) {
-    hoverNetId = null; hoverConstKey = null; hoverBusPinKey = null; hoverBusLines = null; hoverScr = null; draw();
+  if (hoverNetId || hoverSignalName || hoverConstKey || hoverBusPinKey || hoverStreamKey || hoverExprKey) {
+    hoverNetId = null; hoverSignalName = ''; hoverConstKey = null; hoverBusPinKey = null; hoverBusLines = null; hoverStreamKey = null; hoverExprKey = null; hoverScr = null; draw();
   }
   hoverScr = null;
 });
@@ -837,6 +1005,9 @@ window.addEventListener('mouseup', () => { mode = 'idle'; cv.style.cursor = 'gra
 // ---------- 右键菜单 ----------
 const ctxMenu = document.getElementById('ctxMenu');
 function showCtxMenu(x, y) {
+  const process = ctxBlock && ctxBlock.sourceKind === 'process';
+  if (ctxOpenSource) ctxOpenSource.textContent = tr(ctxPin ? '跳转信号定义' : process ? '跳转信号声明' : '跳转模块源文件（打开定义位置）');
+  if (ctxGotoInst) ctxGotoInst.textContent = tr(ctxPin ? '跳转信号使用位置' : process ? '跳转驱动过程' : '跳转到例化位置（打开例化处源码）');
   if (!ctxMenu) return;
   // 菜单随鼠标位置（限制在视口内）
   ctxMenu.style.display = 'block';
@@ -845,13 +1016,16 @@ function showCtxMenu(x, y) {
 }
 function hideCtxMenu() { if (ctxMenu) ctxMenu.style.display = 'none'; }
 let ctxBlock = null;   // 右键菜单触发时记录的目标 block（供菜单项取 IP 类型名）
+let ctxPin = null;
 cv.addEventListener('contextmenu', e => {
   e.preventDefault();
   // 右键打断双击序列（防御）：清掉左键单击计时，防止后续误判
   lastClick = { key: null, t: 0, x: 0, y: 0 };
   // 右键点块：若该块未选中且无 ctrl → 单选它（右键操作目标）
   const w = toWorld(e.offsetX, e.offsetY);
-  const b = blockAt(w.x, w.y);
+  const hit = pinAt(w.x, w.y);
+  const b = hit ? scene.byKey.get(hit.blockKey) : blockAt(w.x, w.y);
+  ctxPin = hit && hit.pin.navigationId ? hit.pin : null;
   ctxBlock = b || null;
   if (b && !checked.has(b.key) && !e.ctrlKey) {
     checked = new Set([b.key]);
@@ -870,11 +1044,11 @@ window.addEventListener('mousedown', e => {
 // 菜单项
 const ctxOpenSource = document.getElementById('ctxOpenSource');
 if (ctxOpenSource) ctxOpenSource.addEventListener('click', () => {
-  hideCtxMenu(); if (ctxBlock) navigate(ctxBlock.key, 'definition');
+  hideCtxMenu(); if (ctxBlock) navigate(ctxPin ? ctxPin.navigationId : ctxBlock.key, 'definition');
 });
 const ctxGotoInst = document.getElementById('ctxGotoInst');
 if (ctxGotoInst) ctxGotoInst.addEventListener('click', () => {
-  hideCtxMenu(); navigate(ctxBlock ? ctxBlock.key : '@scope', 'instantiation');
+  hideCtxMenu(); navigate(ctxPin ? ctxPin.navigationId : ctxBlock ? ctxBlock.key : '@scope', 'instantiation');
 });
 const ctxExportSim = document.getElementById('ctxExportSim');
 const ctxExportFiles = document.getElementById('ctxExportFiles');
