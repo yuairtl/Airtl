@@ -20,6 +20,7 @@ Airtl is a VS Code extension for RTL/FPGA/FPSoC development, providing an RTL hi
 
 **1.1.0-preview · Windows x64 / Linux x64 · 2026-11-03**
 
+- **Airtl 独立侧边栏：**Airtl 现在作为独立视图放在 VS Code 左侧活动栏中，工程选择、Project Sources、Block Design Tree 等内容都在 Airtl 专属侧边栏中显示。
 - **网表连线改进与 VHDL 状态：**本次着重改善模块间连线丢失问题。由于 VHDL 连线提取有效性尚未达到发布要求，本版暂不支持 VHDL 网表及连线提取，计划修复并验证后在下个版本恢复。
 - **Linux 版本：**本次新增 Linux x64 原生支持，提供独立 VSIX，可在 Linux 版 VS Code 中安装。
 - **SystemVerilog 编辑支持：**内置 `.v/.vh/.sv/.svh` 语法高亮；智能感知默认开启，支持 Ctrl+单击定义/类型跳转、引用查找、悬停、补全、例化签名提示、局部重命名及建议修复。编辑器分析与网表和 Blockview 刷新分开运行。
@@ -30,7 +31,7 @@ Airtl is a VS Code extension for RTL/FPGA/FPSoC development, providing an RTL hi
 
 ### 1.1.0-preview 新增与调整 / What's new in 1.1.0-preview
 
-This release focuses on reducing missing connections between modules. VHDL netlist and connection extraction are temporarily unavailable because extraction validity is not yet reliable enough; we plan to restore VHDL support in the next version after fixing and validating it. The release also adds native Linux x64 support with a separate VSIX package, built-in SystemVerilog syntax highlighting and default-on IntelliSense, and improved Blockview navigation with native scene data and navigation caching. AI Agent tool integration uses OpenCode CLI in this release; it starts its API in the same visible TUI process and reuses the active workspace session. Task context is readable and system instructions are sent separately.
+This release gives Airtl its own view in the VS Code Activity Bar. Project selection, Project Sources, and the Block Design Tree now appear in Airtl's dedicated sidebar. It also focuses on reducing missing connections between modules. VHDL netlist and connection extraction are temporarily unavailable because extraction validity is not yet reliable enough; we plan to restore VHDL support in the next version after fixing and validating it. The release adds native Linux x64 support with a separate VSIX package, built-in SystemVerilog syntax highlighting and default-on IntelliSense, and improved Blockview navigation with native scene data and navigation caching. AI Agent tool integration uses OpenCode CLI in this release; it starts its API in the same visible TUI process and reuses the active workspace session. Task context is readable and system instructions are sent separately.
 
 Part of the project source code is open source. The public version requires an internet connection and is currently free for everyone to try. AI assistance skills are not included and must be provided by the user. Contact Airtl for AI skills, AI environment setup, or offline use.
 
